@@ -8,8 +8,9 @@ let appDir = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".codex")
     .appendingPathComponent("eggs")
 let statePath = appDir.appendingPathComponent("state.json").path
+let configPath = appDir.appendingPathComponent("config.json").path
 let bundledAssetsPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
-let stateNames = [
+let defaultAnimations = [
     "unborn",
     "ready",
     "hatching",
@@ -30,10 +31,51 @@ struct RuntimeState {
     let state: String
 }
 
-func normalizedState(_ value: String) -> String? {
-    let state = value.trimmingCharacters(in: .whitespacesAndNewlines)
+struct AnimationSpec {
+    let name: String
+    let row: Int
+    let loop: Any
+}
+
+func normalizedKey(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased()
         .replacingOccurrences(of: "_", with: "-")
+}
+
+func configuredAnimationSpecs(spriteName: String?) -> [AnimationSpec] {
+    let sprite = normalizedSprite(spriteName)
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let animations = object["animations"] as? [String: Any],
+          let spriteAnimations = animations[sprite] as? [String: Any] else {
+        return []
+    }
+    return spriteAnimations.compactMap { name, value in
+        guard let spec = value as? [String: Any] else { return nil }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else { return nil }
+        let row = (spec["row"] as? NSNumber)?.intValue ?? 0
+        let loop = spec["loop"] ?? true
+        return AnimationSpec(name: cleanName, row: max(0, row), loop: loop)
+    }
+}
+
+func animationNames(spriteName: String?) -> [String] {
+    let names = configuredAnimationSpecs(spriteName: spriteName).map(\.name)
+    return names.isEmpty ? defaultAnimations : names
+}
+
+func defaultStateForSprite(_ spriteName: String?) -> String {
+    animationNames(spriteName: spriteName).first ?? defaultState
+}
+
+func normalizedState(_ value: String, spriteName: String? = nil) -> String? {
+    let state = normalizedKey(value)
+    let names = animationNames(spriteName: spriteName)
+    if let direct = names.first(where: { normalizedKey($0) == state }) {
+        return direct
+    }
     let aliases: [String: String] = [
         "0": "unborn",
         "egg": "unborn",
@@ -81,7 +123,13 @@ func normalizedState(_ value: String) -> String? {
         "打": "attack",
     ]
     let canonical = aliases[state] ?? state
-    return stateNames.contains(canonical) ? canonical : nil
+    if let match = names.first(where: { normalizedKey($0) == canonical }) {
+        return match
+    }
+    if names != defaultAnimations, let fallback = defaultAnimations.first(where: { normalizedKey($0) == canonical }) {
+        return fallback
+    }
+    return nil
 }
 
 func readState() -> String {
@@ -97,18 +145,18 @@ func normalizedSprite(_ value: String?) -> String {
 
 func readRuntimeState() -> RuntimeState {
     guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)) else {
-        return RuntimeState(sprite: defaultSprite, state: defaultState)
+        return RuntimeState(sprite: defaultSprite, state: defaultStateForSprite(defaultSprite))
     }
     guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        return RuntimeState(sprite: defaultSprite, state: defaultState)
+        return RuntimeState(sprite: defaultSprite, state: defaultStateForSprite(defaultSprite))
     }
     var sprite = defaultSprite
-    var state = defaultState
+    var state = defaultStateForSprite(sprite)
     if let rawSprite = object["sprite"] as? String {
         sprite = normalizedSprite(rawSprite)
     }
     if let rawState = object["state"] as? String {
-        state = normalizedState(rawState) ?? state
+        state = normalizedState(rawState, spriteName: sprite) ?? defaultStateForSprite(sprite)
     }
     return RuntimeState(sprite: sprite, state: state)
 }
@@ -137,6 +185,8 @@ struct SpriteSheetInfo {
     let metadataPath: String?
     let frameWidth: Int
     let frameHeight: Int
+    let columns: Int
+    let rows: Int
 }
 
 func activeSpritePaths(spriteName: String) -> (image: String, metadata: String?) {
@@ -152,7 +202,7 @@ func activeSpritePaths(spriteName: String) -> (image: String, metadata: String?)
     return (bundledImage, FileManager.default.fileExists(atPath: bundledMetadata) ? bundledMetadata : nil)
 }
 
-func metadataFrameSize(_ path: String?) -> (width: Int, height: Int)? {
+func metadataInfo(_ path: String?) -> (width: Int, height: Int, columns: Int?, rows: Int?)? {
     guard let path,
           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -162,7 +212,12 @@ func metadataFrameSize(_ path: String?) -> (width: Int, height: Int)? {
           height.intValue > 0 else {
         return nil
     }
-    return (width.intValue, height.intValue)
+    return (
+        width.intValue,
+        height.intValue,
+        (object["columns"] as? NSNumber)?.intValue,
+        (object["rows"] as? NSNumber)?.intValue
+    )
 }
 
 func loadSpriteSheetInfo(spriteName: String) -> SpriteSheetInfo? {
@@ -175,13 +230,17 @@ func loadSpriteSheetInfo(spriteName: String) -> SpriteSheetInfo? {
     }
     let fallbackWidth = min(Int(defaultSpriteSize), cg.width)
     let fallbackHeight = min(Int(defaultSpriteSize), cg.height)
-    let frameSize = metadataFrameSize(paths.metadata) ?? (fallbackWidth, fallbackHeight)
+    let metadata = metadataInfo(paths.metadata)
+    let frameWidth = metadata?.width ?? fallbackWidth
+    let frameHeight = metadata?.height ?? fallbackHeight
     return SpriteSheetInfo(
         name: sprite,
         imagePath: paths.image,
         metadataPath: paths.metadata,
-        frameWidth: frameSize.width,
-        frameHeight: frameSize.height
+        frameWidth: frameWidth,
+        frameHeight: frameHeight,
+        columns: metadata?.columns ?? max(1, cg.width / frameWidth),
+        rows: metadata?.rows ?? max(1, cg.height / frameHeight)
     )
 }
 
@@ -241,9 +300,23 @@ final class EggView: NSView {
         checkState()
 
         if !frames.isEmpty {
-            let stateFrames = framesForCurrentState()
-            stateFrames[frameIndex % stateFrames.count].draw(in: bounds)
-            if Date() >= nextFrameAdvance {
+            let (stateFrames, loop) = framesForCurrentState()
+            let framePosition: Int
+            let shouldAdvance: Bool
+            if let loopBool = loop as? Bool {
+                framePosition = loopBool ? frameIndex % stateFrames.count : min(frameIndex, stateFrames.count - 1)
+                shouldAdvance = loopBool || frameIndex < stateFrames.count - 1
+            } else if let loopNumber = loop as? NSNumber {
+                let loopCount = max(1, loopNumber.intValue)
+                let maxFrames = stateFrames.count * loopCount
+                framePosition = frameIndex < maxFrames ? frameIndex % stateFrames.count : stateFrames.count - 1
+                shouldAdvance = frameIndex < maxFrames - 1
+            } else {
+                framePosition = frameIndex % stateFrames.count
+                shouldAdvance = true
+            }
+            stateFrames[framePosition].draw(in: bounds)
+            if shouldAdvance && Date() >= nextFrameAdvance {
                 frameIndex += 1
                 nextFrameAdvance = Date().addingTimeInterval(animationInterval)
             }
@@ -276,16 +349,28 @@ final class EggView: NSView {
         nextStateCheck = Date().addingTimeInterval(0.2)
     }
 
-    private func framesForCurrentState() -> [NSImage] {
-        guard !frames.isEmpty else { return [] }
-        let stateIndex = stateNames.firstIndex(of: currentRuntimeState.state) ?? 0
-        let framesPerState = max(1, frames.count / stateNames.count)
-        let start = stateIndex * framesPerState
-        let end = min(start + framesPerState, frames.count)
-        if start < end {
-            return Array(frames[start..<end])
+    private func animationSpecForCurrentState() -> (row: Int, loop: Any) {
+        let configured = configuredAnimationSpecs(spriteName: currentRuntimeState.sprite)
+        let stateKey = normalizedKey(currentRuntimeState.state)
+        if let spec = configured.first(where: { normalizedKey($0.name) == stateKey }) {
+            return (spec.row, spec.loop)
         }
-        return frames
+        let row = defaultAnimations.map(normalizedKey).firstIndex(of: stateKey) ?? 0
+        return (row, true)
+    }
+
+    private func framesForCurrentState() -> ([NSImage], Any) {
+        guard !frames.isEmpty else { return ([], true) }
+        let spec = animationSpecForCurrentState()
+        let columns = max(1, spriteInfo?.columns ?? frames.count)
+        let rows = max(1, spriteInfo?.rows ?? 1)
+        let row = min(max(0, spec.row), rows - 1)
+        let start = row * columns
+        let end = min(start + columns, frames.count)
+        if start < end {
+            return (Array(frames[start..<end]), spec.loop)
+        }
+        return (frames, spec.loop)
     }
 
     override func mouseDown(with event: NSEvent) {

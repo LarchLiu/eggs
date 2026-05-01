@@ -20,6 +20,7 @@ APP_DIR = Path(os.environ.get("EGGS_APP_DIR", Path.home() / ".codex" / "eggs")).
 PID_FILE = APP_DIR / "egg.pid"
 LOG_FILE = APP_DIR / "egg.log"
 STATE_FILE = APP_DIR / "state.json"
+CONFIG_FILE = APP_DIR / "config.json"
 BUNDLED_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 SWIFT_SOURCE = Path(__file__).resolve().with_name("EggDesktop.swift")
 SWIFT_BINARY = APP_DIR / "EggDesktop"
@@ -27,7 +28,7 @@ DEFAULT_SPRITE_SIZE = 251
 DEFAULT_SPRITE = "dino"
 FRAME_MS = 33
 ANIMATION_MS = 180
-STATE_NAMES = [
+DEFAULT_ANIMATIONS = [
     "unborn",
     "ready",
     "hatching",
@@ -95,8 +96,50 @@ def write_pid(pid: int) -> None:
     PID_FILE.write_text(f"{pid}\n", encoding="utf-8")
 
 
-def normalize_state(value: str) -> str | None:
-    state = value.strip().lower().replace("_", "-")
+def normalized_key(value: str) -> str:
+    return value.strip().lower().replace("_", "-")
+
+
+def read_config() -> dict:
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def configured_animations(sprite: str | None = None) -> dict[str, dict]:
+    config = read_config()
+    animations = config.get("animations")
+    if not isinstance(animations, dict):
+        return {}
+    sprite_name = normalize_sprite(sprite) if sprite else DEFAULT_SPRITE
+    sprite_animations = animations.get(sprite_name)
+    if not isinstance(sprite_animations, dict):
+        return {}
+    result: dict[str, dict] = {}
+    for name, spec in sprite_animations.items():
+        if isinstance(spec, dict) and str(name).strip():
+            result[str(name).strip()] = spec
+    return result
+
+
+def animation_names(sprite: str | None = None) -> list[str]:
+    names = list(configured_animations(sprite).keys())
+    return names or DEFAULT_ANIMATIONS
+
+
+def default_state_for_sprite(sprite: str | None = None) -> str:
+    names = animation_names(sprite)
+    return names[0] if names else DEFAULT_STATE
+
+
+def normalize_state(value: str, sprite: str | None = None) -> str | None:
+    state = normalized_key(value)
+    names = animation_names(sprite)
+    for name in names:
+        if normalized_key(name) == state:
+            return name
     aliases = {
         "0": "unborn",
         "egg": "unborn",
@@ -144,9 +187,35 @@ def normalize_state(value: str) -> str | None:
         "打": "attack",
     }
     state = aliases.get(state, state)
-    if state in STATE_NAMES:
-        return state
+    if names != DEFAULT_ANIMATIONS:
+        for name in DEFAULT_ANIMATIONS:
+            if normalized_key(name) == state:
+                return name
     return None
+
+
+def animation_spec(sprite: str, state: str) -> tuple[int, bool | int]:
+    configured = configured_animations(sprite)
+    state_key = normalized_key(state)
+    for name, spec in configured.items():
+        if normalized_key(name) != state_key:
+            continue
+        raw_row = spec.get("row", 0)
+        try:
+            row = int(raw_row)
+        except (TypeError, ValueError):
+            row = 0
+        loop = spec.get("loop", True)
+        if isinstance(loop, bool):
+            return max(0, row), loop
+        try:
+            return max(0, row), max(1, int(loop))
+        except (TypeError, ValueError):
+            return max(0, row), True
+
+    names = DEFAULT_ANIMATIONS
+    row = next((index for index, name in enumerate(names) if normalized_key(name) == state_key), 0)
+    return row, True
 
 
 def normalize_sprite(value: str | None) -> str:
@@ -161,8 +230,8 @@ def normalize_sprite(value: str | None) -> str:
 
 
 def read_runtime_state() -> tuple[str, str]:
-    state = DEFAULT_STATE
     sprite = DEFAULT_SPRITE
+    state = default_state_for_sprite(sprite)
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -172,7 +241,7 @@ def read_runtime_state() -> tuple[str, str]:
 
     if isinstance(data, dict):
         sprite = normalize_sprite(data.get("sprite"))
-        state = normalize_state(str(data.get("state", ""))) or state
+        state = normalize_state(str(data.get("state", "")), sprite) or default_state_for_sprite(sprite)
     return sprite, state
 
 
@@ -193,12 +262,12 @@ def read_sprite() -> str:
 
 
 def set_state(value: str, sprite_name: str | None = None) -> int:
-    state = normalize_state(value)
-    if state is None:
-        print(f"unknown companion state '{value}'. choices: {', '.join(STATE_NAMES)}", file=sys.stderr)
-        return 2
     current_sprite, _ = read_runtime_state()
     sprite = normalize_sprite(sprite_name) if sprite_name else current_sprite
+    state = normalize_state(value, sprite)
+    if state is None:
+        print(f"unknown companion state '{value}'. choices: {', '.join(animation_names(sprite))}", file=sys.stderr)
+        return 2
     write_runtime_state(sprite, state)
     print(f"companion state set to {state}; sprite={sprite}")
     return 0
@@ -207,6 +276,7 @@ def set_state(value: str, sprite_name: str | None = None) -> int:
 def set_sprite(value: str) -> int:
     sprite = normalize_sprite(value)
     _, state = read_runtime_state()
+    state = normalize_state(state, sprite) or default_state_for_sprite(sprite)
     write_runtime_state(sprite, state)
     print(f"companion sprite set to {sprite}; state={state}")
     return 0
@@ -370,10 +440,10 @@ def load_sprite_metadata(spritesheet: Path, sheet_w: int, sheet_h: int) -> tuple
     return min(DEFAULT_SPRITE_SIZE, sheet_w), min(DEFAULT_SPRITE_SIZE, sheet_h)
 
 
-def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int]:
+def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int, int, int]:
     spritesheet = find_spritesheet(sprite_name)
     if spritesheet is None:
-        return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE
+        return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE, 1, 1
     try:
         sheet = tk.PhotoImage(file=str(spritesheet))
         sheet_w = sheet.width()
@@ -381,7 +451,7 @@ def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int]:
         frame_w, frame_h = load_sprite_metadata(spritesheet, sheet_w, sheet_h)
         if sheet_w < frame_w or sheet_h < frame_h:
             print(f"spritesheet too small: {spritesheet}", file=sys.stderr)
-            return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE
+            return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE, 1, 1
 
         cols = sheet_w // frame_w
         rows = sheet_h // frame_h
@@ -393,30 +463,32 @@ def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int]:
                 y1 = row * frame_h
                 frame.tk.call(frame, "copy", sheet, "-from", x1, y1, x1 + frame_w, y1 + frame_h, "-to", 0, 0)
                 frames.append(frame)
-        return frames, frame_w, frame_h
+        return frames, frame_w, frame_h, cols, rows
     except Exception as exc:
         print(f"could not load spritesheet {spritesheet}: {exc}", file=sys.stderr)
-        return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE
+        return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE, 1, 1
 
 
-def frames_for_state(frames: list, state: str) -> list:
+def frames_for_state(frames: list, sprite: str, state: str, columns: int, rows: int) -> tuple[list, bool | int]:
     if not frames:
-        return []
-    state_index = STATE_NAMES.index(state)
-    frames_per_state = max(1, len(frames) // len(STATE_NAMES))
-    start = state_index * frames_per_state
-    end = min(start + frames_per_state, len(frames))
-    return frames[start:end] or frames
+        return [], True
+    row, loop = animation_spec(sprite, state)
+    row = min(max(0, row), max(0, rows - 1))
+    start = row * columns
+    end = min(start + columns, len(frames))
+    return (frames[start:end] or frames), loop
 
 
 class Egg:
-    def __init__(self, tk, root, canvas, frames, sprite_w: int, sprite_h: int, sprite: str):
+    def __init__(self, tk, root, canvas, frames, sprite_w: int, sprite_h: int, columns: int, rows: int, sprite: str):
         self.tk = tk
         self.root = root
         self.canvas = canvas
         self.frames = frames
         self.sprite_w = sprite_w
         self.sprite_h = sprite_h
+        self.columns = columns
+        self.rows = rows
         self.screen_w = max(root.winfo_screenwidth(), self.sprite_w)
         self.screen_h = max(root.winfo_screenheight(), self.sprite_h)
         self.x = random.randint(0, max(0, self.screen_w - self.sprite_w))
@@ -470,7 +542,7 @@ class Egg:
             next_sprite, next_state = read_runtime_state()
             if next_sprite != self.sprite:
                 self.sprite = next_sprite
-                self.frames, self.sprite_w, self.sprite_h = load_sprite_frames(self.tk, self.sprite)
+                self.frames, self.sprite_w, self.sprite_h, self.columns, self.rows = load_sprite_frames(self.tk, self.sprite)
                 self.canvas.configure(width=self.sprite_w, height=self.sprite_h)
                 self.root.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
                 self.frame_index = 0
@@ -480,10 +552,17 @@ class Egg:
             self.state_check_at = now + 0.2
 
         if self.frames:
-            state_frames = frames_for_state(self.frames, self.state)
-            frame = state_frames[self.frame_index % len(state_frames)]
+            state_frames, loop = frames_for_state(self.frames, self.sprite, self.state, self.columns, self.rows)
+            if isinstance(loop, bool):
+                frame_position = self.frame_index % len(state_frames) if loop else min(self.frame_index, len(state_frames) - 1)
+                should_advance = loop or self.frame_index < len(state_frames) - 1
+            else:
+                max_frames = len(state_frames) * loop
+                frame_position = self.frame_index % len(state_frames) if self.frame_index < max_frames else len(state_frames) - 1
+                should_advance = self.frame_index < max_frames - 1
+            frame = state_frames[frame_position]
             self.canvas.create_image(self.sprite_w / 2, self.sprite_h / 2, image=frame)
-            if now >= self.next_frame_at:
+            if should_advance and now >= self.next_frame_at:
                 self.frame_index += 1
                 self.next_frame_at = now + ANIMATION_MS / 1000
             return
@@ -550,7 +629,7 @@ def run_gui() -> int:
             pass
 
     sprite, _ = read_runtime_state()
-    frames, sprite_w, sprite_h = load_sprite_frames(tk, sprite)
+    frames, sprite_w, sprite_h, columns, rows = load_sprite_frames(tk, sprite)
     canvas = tk.Canvas(
         root,
         width=sprite_w,
@@ -571,7 +650,7 @@ def run_gui() -> int:
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    egg = Egg(tk, root, canvas, frames, sprite_w, sprite_h, sprite)
+    egg = Egg(tk, root, canvas, frames, sprite_w, sprite_h, columns, rows, sprite)
     canvas.bind("<ButtonPress-1>", egg.begin_drag)
     canvas.bind("<B1-Motion>", egg.drag_to)
     canvas.bind("<ButtonRelease-1>", egg.end_drag)
@@ -607,7 +686,7 @@ def main() -> int:
         if not args.path:
             sprite, state = read_runtime_state()
             print(f"current companion state: {state}; sprite={sprite}")
-            print(f"choices: {', '.join(STATE_NAMES)}")
+            print(f"choices: {', '.join(animation_names(sprite))}")
             return 0
         return set_state(args.path, args.name)
     if args.command == "sprite":

@@ -44,6 +44,21 @@ The current sprite and animation state are stored in `~/.codex/eggs/state.json`:
 }
 ```
 
+Custom animation row names are stored in `~/.codex/eggs/config.json`. `row` is zero-based and points to the spritesheet row; `loop` can be `true`, `false`, or a number of loops:
+
+```json
+{
+  "animations": {
+    "dino": {
+      "idle": { "row": 3, "loop": true },
+      "walk": { "row": 4, "loop": true },
+      "attackOnce": { "row": 10, "loop": false },
+      "roar3": { "row": 9, "loop": 3 }
+    }
+  }
+}
+```
+
 ## Companion Commands
 
 Start the companion:
@@ -97,6 +112,7 @@ Switch sprite:
 cd eggs
 python3 scripts/egg_desktop.py sprite dino
 python3 scripts/egg_desktop.py state walk dino
+python3 scripts/egg_desktop.py state attackOnce dino
 ```
 
 Install a replacement sprite sheet:
@@ -156,7 +172,7 @@ swiftc -module-cache-path "$PWD/.swift-module-cache" \
 ## Sprite Sheet Rules
 
 - PNG
-- Frame size is defined by `<sprite>.json`; 251x251 is only the current bundled asset size.
+- Frame size is defined by `<sprite>.json`; animation row names can be overridden in `~/.codex/eggs/config.json`.
 - Regular grid
 - The bundled sheet is 5 columns by 11 rows
 

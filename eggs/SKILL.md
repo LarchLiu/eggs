@@ -117,12 +117,14 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
 - Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.
 - The runtime reads the current sprite and state from `~/.codex/eggs/state.json`.
+- The runtime reads optional user animation names from `~/.codex/eggs/config.json` under `animations.<sprite>.<name>`, where each animation object uses `row` and `loop`.
 - The runtime first looks for a user-installed sprite at `~/.codex/eggs/<sprite>.png` with optional `~/.codex/eggs/<sprite>.json`, then bundled skill assets at `assets/<sprite>.png` and `assets/<sprite>.json`, then falls back to a simple procedural placeholder drawing.
 - Resolve bundled assets relative to this installed skill directory; never rely on the original repo path or any `/Users/...` absolute path.
 - Do not hardcode the frame size. The animation runtime reads `frameWidth` and `frameHeight` from `<sprite>.json` to slice the PNG and size the desktop window. It only falls back to 251x251 if metadata is missing or invalid.
 - The bundled spritesheet currently has 251x251 frames in a 5x11 regular grid.
 - `assets/dino.json` keeps `image` as `dino.png`, relative to the JSON file's own directory. Generated sprite metadata should stay portable in the same way.
-- Each row is a state: `unborn`, `ready`, `hatching`, `hatched`, `walk`, `sleep`, `eat`, `drink`, `play`, `roar`, `attack`.
+- Without custom config, each row is a state: `unborn`, `ready`, `hatching`, `hatched`, `walk`, `sleep`, `eat`, `drink`, `play`, `roar`, `attack`.
+- With custom config, accept animation names from `config.json`, for example `"idle": { "row": 3, "loop": true }`, `"attackOnce": { "row": 10, "loop": false }`, or `"roar3": { "row": 9, "loop": 3 }`.
 - Chinese state requests are supported through aliases such as `睡觉`, `吃鸡腿`, `喝水`, `玩耍`, `咆哮`, and `攻击`.
 - The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
 - The desktop window can be repositioned by dragging it with the mouse.
