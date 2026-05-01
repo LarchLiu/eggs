@@ -1,6 +1,6 @@
 # Sprite Tools
 
-Small Swift tools for preparing the sprite sheets used by the desktop companion skill.
+Small Swift tools for preparing and installing the sprite sheets used by the desktop companion skill.
 
 These are source tools, not portable binaries. Compile them locally on macOS when needed.
 
@@ -40,22 +40,27 @@ For borderless regular grid sheets:
 Useful options:
 
 - `--frame-size 251`: force every output frame into a 251x251 canvas.
+- `--name dino`: override output names to `dino.png` and `dino.json`.
 - `--align preserve-cell`: default for animation; preserves source cell positioning.
 - `--align center-content`: useful for icons, not usually for animation.
+
+If `--name` is omitted, extraction writes `<input-name>_spritesheet.png` and `<input-name>_spritesheet.json`.
 
 ## Merge Extracted Sheets
 
 After extracting multiple sheets into regular spritesheets with JSON metadata:
 
 ```bash
-/tmp/merge_spritesheets assets/sprites/combined \
-  assets/sprites/state_a/spritesheet.json \
-  assets/sprites/state_b/spritesheet.json
+/tmp/merge_spritesheets assets/sprites/combined --name dino \
+  assets/sprites/state_a/dino.json \
+  assets/sprites/state_b/dino-extra.json
 ```
 
 The merge tool stacks sources vertically, keeps the same column count, and centers smaller source frames into the maximum frame size.
-It writes `spritesheet.png` and `spritesheet.json` into the output directory.
-The `eggs` runtime reads `spritesheet.json` for `frameWidth` and `frameHeight`, so keep the JSON next to the PNG when installing or copying a sheet.
+It writes `<name>.png` and `<name>.json` into the output directory.
+If `--name` is omitted, merge writes `<output-dir-name>_spritesheet.png` and `<output-dir-name>_spritesheet.json`.
+Both extraction and merge also copy generated PNG/JSON files to `~/.codex/eggs/` by default.
+The `eggs` runtime reads `<sprite>.json` for `frameWidth` and `frameHeight`, so keep the JSON next to the PNG when installing or copying a sheet manually.
 
 ## Inspection Helpers
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spawn a small animated egg companion that roams around the desktop."""
+"""Spawn a small animated sprite companion that roams around the desktop."""
 
 from __future__ import annotations
 
@@ -19,14 +19,12 @@ from pathlib import Path
 APP_DIR = Path(os.environ.get("EGGS_APP_DIR", Path.home() / ".codex" / "eggs")).expanduser()
 PID_FILE = APP_DIR / "egg.pid"
 LOG_FILE = APP_DIR / "egg.log"
-USER_SPRITESHEET = APP_DIR / "spritesheet.png"
-USER_METADATA = APP_DIR / "spritesheet.json"
-STATE_FILE = APP_DIR / "state.txt"
-BUNDLED_SPRITESHEET = Path(__file__).resolve().parents[1] / "assets" / "spritesheet.png"
-BUNDLED_METADATA = Path(__file__).resolve().parents[1] / "assets" / "spritesheet.json"
+STATE_FILE = APP_DIR / "state.json"
+BUNDLED_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 SWIFT_SOURCE = Path(__file__).resolve().with_name("EggDesktop.swift")
 SWIFT_BINARY = APP_DIR / "EggDesktop"
 DEFAULT_SPRITE_SIZE = 251
+DEFAULT_SPRITE = "dino"
 FRAME_MS = 33
 ANIMATION_MS = 180
 STATE_NAMES = [
@@ -151,22 +149,66 @@ def normalize_state(value: str) -> str | None:
     return None
 
 
-def read_state() -> str:
+def normalize_sprite(value: str | None) -> str:
+    if not value:
+        return DEFAULT_SPRITE
+    name = value.strip()
+    if not name:
+        return DEFAULT_SPRITE
+    stem = Path(name).stem
+    safe = "".join(ch for ch in stem if ch.isalnum() or ch in ("-", "_"))
+    return safe or DEFAULT_SPRITE
+
+
+def read_runtime_state() -> tuple[str, str]:
+    state = DEFAULT_STATE
+    sprite = DEFAULT_SPRITE
     try:
-        state = normalize_state(STATE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        state = None
-    return state or DEFAULT_STATE
+        return sprite, state
+    except (json.JSONDecodeError, OSError, TypeError):
+        return sprite, state
+
+    if isinstance(data, dict):
+        sprite = normalize_sprite(data.get("sprite"))
+        state = normalize_state(str(data.get("state", ""))) or state
+    return sprite, state
 
 
-def set_state(value: str) -> int:
+def write_runtime_state(sprite: str, state: str) -> None:
+    ensure_app_dir()
+    STATE_FILE.write_text(
+        json.dumps({"sprite": normalize_sprite(sprite), "state": state}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_state() -> str:
+    return read_runtime_state()[1]
+
+
+def read_sprite() -> str:
+    return read_runtime_state()[0]
+
+
+def set_state(value: str, sprite_name: str | None = None) -> int:
     state = normalize_state(value)
     if state is None:
-        print(f"unknown egg state '{value}'. choices: {', '.join(STATE_NAMES)}", file=sys.stderr)
+        print(f"unknown companion state '{value}'. choices: {', '.join(STATE_NAMES)}", file=sys.stderr)
         return 2
-    ensure_app_dir()
-    STATE_FILE.write_text(f"{state}\n", encoding="utf-8")
-    print(f"egg state set to {state}")
+    current_sprite, _ = read_runtime_state()
+    sprite = normalize_sprite(sprite_name) if sprite_name else current_sprite
+    write_runtime_state(sprite, state)
+    print(f"companion state set to {state}; sprite={sprite}")
+    return 0
+
+
+def set_sprite(value: str) -> int:
+    sprite = normalize_sprite(value)
+    _, state = read_runtime_state()
+    write_runtime_state(sprite, state)
+    print(f"companion sprite set to {sprite}; state={state}")
     return 0
 
 
@@ -200,7 +242,7 @@ def ensure_swift_binary() -> Path | None:
     ]
     result = subprocess.run(compile_cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(result.stderr.strip() or "failed to compile Swift egg runtime", file=sys.stderr)
+        print(result.stderr.strip() or "failed to compile Swift companion runtime", file=sys.stderr)
         return None
     return SWIFT_BINARY
 
@@ -208,7 +250,7 @@ def ensure_swift_binary() -> Path | None:
 def runtime_command() -> list[str] | None:
     swift_binary = ensure_swift_binary()
     if swift_binary is not None:
-        return [str(swift_binary), str(BUNDLED_SPRITESHEET), str(BUNDLED_METADATA)]
+        return [str(swift_binary), str(BUNDLED_ASSETS_DIR)]
     return [sys.executable, str(Path(__file__).resolve()), "run"]
 
 
@@ -216,13 +258,13 @@ def start_background() -> int:
     ensure_app_dir()
     current = read_pid()
     if managed_process_alive(current):
-        print(f"egg already running with pid {current}")
+        print(f"companion already running with pid {current}")
         return 0
     clear_pid()
 
     command = runtime_command()
     if command is None:
-        print("no usable egg runtime found", file=sys.stderr)
+        print("no usable companion runtime found", file=sys.stderr)
         return 1
 
     with LOG_FILE.open("ab") as log:
@@ -235,7 +277,7 @@ def start_background() -> int:
             close_fds=True,
         )
     write_pid(proc.pid)
-    print(f"spawned egg with pid {proc.pid}")
+    print(f"spawned companion with pid {proc.pid}")
     return 0
 
 
@@ -243,7 +285,7 @@ def stop_background() -> int:
     pid = read_pid()
     if not managed_process_alive(pid):
         clear_pid()
-        print("egg is not running")
+        print("companion is not running")
         return 0
 
     assert pid is not None
@@ -252,7 +294,7 @@ def stop_background() -> int:
     while time.time() < deadline:
         if not process_alive(pid):
             clear_pid()
-            print("stopped egg")
+            print("stopped companion")
             return 0
         time.sleep(0.1)
 
@@ -261,21 +303,22 @@ def stop_background() -> int:
     except ProcessLookupError:
         pass
     clear_pid()
-    print("stopped egg")
+    print("stopped companion")
     return 0
 
 
 def status() -> int:
     pid = read_pid()
+    sprite, state = read_runtime_state()
     if managed_process_alive(pid):
-        print(f"egg running with pid {pid}; state={read_state()}")
+        print(f"companion running with pid {pid}; sprite={sprite}; state={state}")
     else:
         clear_pid()
-        print(f"egg is not running; state={read_state()}")
+        print(f"companion is not running; sprite={sprite}; state={state}")
     return 0
 
 
-def install_spritesheet(path: str) -> int:
+def install_spritesheet(path: str, sprite_name: str | None = None) -> int:
     source = Path(path).expanduser().resolve()
     if not source.exists():
         print(f"spritesheet not found: {source}", file=sys.stderr)
@@ -284,30 +327,32 @@ def install_spritesheet(path: str) -> int:
         print("spritesheet must be a PNG file", file=sys.stderr)
         return 1
     ensure_app_dir()
-    shutil.copy2(source, USER_SPRITESHEET)
-    metadata = source.with_name("spritesheet.json")
+    sprite = normalize_sprite(sprite_name or source.stem)
+    user_image = APP_DIR / f"{sprite}.png"
+    user_metadata = APP_DIR / f"{sprite}.json"
+    shutil.copy2(source, user_image)
+    metadata = source.with_suffix(".json")
     if metadata.exists():
-        shutil.copy2(metadata, USER_METADATA)
-    elif USER_METADATA.exists():
-        USER_METADATA.unlink()
-    print(f"installed spritesheet at {USER_SPRITESHEET}")
+        shutil.copy2(metadata, user_metadata)
+    elif user_metadata.exists():
+        user_metadata.unlink()
+    print(f"installed sprite {sprite} at {user_image}")
     return 0
 
 
-def find_spritesheet() -> Path | None:
-    if USER_SPRITESHEET.exists():
-        return USER_SPRITESHEET
-    if BUNDLED_SPRITESHEET.exists():
-        return BUNDLED_SPRITESHEET
+def find_spritesheet(sprite_name: str) -> Path | None:
+    sprite = normalize_sprite(sprite_name)
+    user_spritesheet = APP_DIR / f"{sprite}.png"
+    bundled_spritesheet = BUNDLED_ASSETS_DIR / f"{sprite}.png"
+    if user_spritesheet.exists():
+        return user_spritesheet
+    if bundled_spritesheet.exists():
+        return bundled_spritesheet
     return None
 
 
 def find_metadata(spritesheet: Path) -> Path | None:
-    if spritesheet == USER_SPRITESHEET and USER_METADATA.exists():
-        return USER_METADATA
-    if spritesheet == BUNDLED_SPRITESHEET and BUNDLED_METADATA.exists():
-        return BUNDLED_METADATA
-    metadata = spritesheet.with_name("spritesheet.json")
+    metadata = spritesheet.with_suffix(".json")
     return metadata if metadata.exists() else None
 
 
@@ -325,8 +370,8 @@ def load_sprite_metadata(spritesheet: Path, sheet_w: int, sheet_h: int) -> tuple
     return min(DEFAULT_SPRITE_SIZE, sheet_w), min(DEFAULT_SPRITE_SIZE, sheet_h)
 
 
-def load_sprite_frames(tk) -> tuple[list, int, int]:
-    spritesheet = find_spritesheet()
+def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int]:
+    spritesheet = find_spritesheet(sprite_name)
     if spritesheet is None:
         return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE
     try:
@@ -365,7 +410,8 @@ def frames_for_state(frames: list, state: str) -> list:
 
 
 class Egg:
-    def __init__(self, root, canvas, frames, sprite_w: int, sprite_h: int):
+    def __init__(self, tk, root, canvas, frames, sprite_w: int, sprite_h: int, sprite: str):
+        self.tk = tk
         self.root = root
         self.canvas = canvas
         self.frames = frames
@@ -379,6 +425,7 @@ class Egg:
         self.vy = random.uniform(-0.25, 0.25)
         self.phase = 0.0
         self.target_change_at = time.time() + random.uniform(4, 9)
+        self.sprite = sprite
         self.state = read_state()
         self.frame_index = 0
         self.state_check_at = 0.0
@@ -420,7 +467,13 @@ class Egg:
         self.canvas.delete("all")
         now = time.time()
         if now >= self.state_check_at:
-            next_state = read_state()
+            next_sprite, next_state = read_runtime_state()
+            if next_sprite != self.sprite:
+                self.sprite = next_sprite
+                self.frames, self.sprite_w, self.sprite_h = load_sprite_frames(self.tk, self.sprite)
+                self.canvas.configure(width=self.sprite_w, height=self.sprite_h)
+                self.root.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
+                self.frame_index = 0
             if next_state != self.state:
                 self.state = next_state
                 self.frame_index = 0
@@ -469,7 +522,7 @@ def run_gui() -> int:
     try:
         import tkinter as tk
     except Exception as exc:  # pragma: no cover - depends on local Python build
-        print(f"Tkinter is required to display the desktop egg: {exc}", file=sys.stderr)
+        print(f"Tkinter is required to display the desktop companion: {exc}", file=sys.stderr)
         return 1
 
     ensure_app_dir()
@@ -496,7 +549,8 @@ def run_gui() -> int:
         except tk.TclError:
             pass
 
-    frames, sprite_w, sprite_h = load_sprite_frames(tk)
+    sprite, _ = read_runtime_state()
+    frames, sprite_w, sprite_h = load_sprite_frames(tk, sprite)
     canvas = tk.Canvas(
         root,
         width=sprite_w,
@@ -517,7 +571,7 @@ def run_gui() -> int:
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    egg = Egg(root, canvas, frames, sprite_w, sprite_h)
+    egg = Egg(tk, root, canvas, frames, sprite_w, sprite_h, sprite)
     canvas.bind("<ButtonPress-1>", egg.begin_drag)
     canvas.bind("<B1-Motion>", egg.drag_to)
     canvas.bind("<ButtonRelease-1>", egg.end_drag)
@@ -532,9 +586,10 @@ def run_gui() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Manage the desktop egg companion.")
-    parser.add_argument("command", choices=["start", "run", "stop", "restart", "status", "spritesheet", "state"])
-    parser.add_argument("path", nargs="?", help="PNG spritesheet path or egg state.")
+    parser = argparse.ArgumentParser(description="Manage the desktop sprite companion.")
+    parser.add_argument("command", choices=["start", "run", "stop", "restart", "status", "spritesheet", "state", "sprite"])
+    parser.add_argument("path", nargs="?", help="PNG spritesheet path, sprite name, or companion state.")
+    parser.add_argument("name", nargs="?", help="Optional sprite name.")
     args = parser.parse_args()
 
     if args.command == "start":
@@ -550,15 +605,21 @@ def main() -> int:
         return status()
     if args.command == "state":
         if not args.path:
-            print(f"current egg state: {read_state()}")
+            sprite, state = read_runtime_state()
+            print(f"current companion state: {state}; sprite={sprite}")
             print(f"choices: {', '.join(STATE_NAMES)}")
             return 0
-        return set_state(args.path)
+        return set_state(args.path, args.name)
+    if args.command == "sprite":
+        if not args.path:
+            print(f"current companion sprite: {read_sprite()}")
+            return 0
+        return set_sprite(args.path)
     if args.command == "spritesheet":
         if not args.path:
-            print("usage: egg_desktop.py spritesheet /path/to/spritesheet.png", file=sys.stderr)
+            print("usage: egg_desktop.py spritesheet /path/to/name.png [name]", file=sys.stderr)
             return 2
-        return install_spritesheet(args.path)
+        return install_spritesheet(args.path, args.name)
     return 2
 
 

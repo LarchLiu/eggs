@@ -123,6 +123,7 @@ enum GridMode: String {
 struct ToolOptions {
     let inputPath: String
     let outputDir: String
+    let spriteName: String
     let columns: Int?
     let rows: Int?
     let frameWidth: Int?
@@ -143,6 +144,8 @@ func usage() -> String {
       --columns <n>              Override detected column count.
       --rows <n>                 Override detected row count.
       --frame-size <w>x<h>|<n>   Override output frame canvas size.
+      --name <name>              Output sprite name. Writes <name>.png and <name>.json.
+                                 Defaults to <input-name>_spritesheet.
       --prefix <name>            Individual frame filename prefix. Defaults to output directory name.
       --border-threshold <n>     Border detection threshold, 0.0-1.0. Default: 0.75.
       --padding <px>             Pixels to trim inward from detected cell borders. Default: 5.
@@ -190,6 +193,7 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
     var rows: Int? = nil
     var frameWidth: Int? = nil
     var frameHeight: Int? = nil
+    var spriteName: String? = nil
     var prefix: String? = nil
     var borderThreshold = 0.75
     var trimPadding = 5
@@ -217,6 +221,9 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
             let size = try parseFrameSize(try requireValue())
             frameWidth = size.width
             frameHeight = size.height
+            i += 2
+        case "--name":
+            spriteName = try requireValue()
             i += 2
         case "--prefix":
             prefix = try requireValue()
@@ -250,6 +257,8 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
         }
     }
 
+    let inputStem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+    let defaultSpriteName = inputStem.isEmpty ? "spritesheet" : "\(inputStem)_spritesheet"
     let defaultPrefix = URL(fileURLWithPath: outputDir).lastPathComponent.isEmpty
         ? "sprites"
         : URL(fileURLWithPath: outputDir).lastPathComponent
@@ -257,6 +266,7 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
     return ToolOptions(
         inputPath: inputPath,
         outputDir: outputDir,
+        spriteName: spriteName ?? defaultSpriteName,
         columns: columns,
         rows: rows,
         frameWidth: frameWidth,
@@ -290,6 +300,26 @@ func savePNG(_ image: RGBAImage, to path: String) throws {
     guard CGImageDestinationFinalize(destination) else {
         throw NSError(domain: "SpriteExtract", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to save PNG at \(path)"])
     }
+}
+
+func copyReplacingItem(from source: URL, to destination: URL) throws {
+    let sourcePath = source.standardizedFileURL.path
+    let destinationPath = destination.standardizedFileURL.path
+    guard sourcePath != destinationPath else { return }
+    if FileManager.default.fileExists(atPath: destination.path) {
+        try FileManager.default.removeItem(at: destination)
+    }
+    try FileManager.default.copyItem(at: source, to: destination)
+}
+
+func installSpriteAssets(imageURL: URL, metadataURL: URL) throws -> URL {
+    let installDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex")
+        .appendingPathComponent("eggs")
+    try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
+    try copyReplacingItem(from: imageURL, to: installDir.appendingPathComponent(imageURL.lastPathComponent))
+    try copyReplacingItem(from: metadataURL, to: installDir.appendingPathComponent(metadataURL.lastPathComponent))
+    return installDir
 }
 
 func darkPixelRatioForColumn(_ image: RGBAImage, x: Int) -> Double {
@@ -791,8 +821,9 @@ do {
     }
 
     let sheet = combineFrames(frames, columns: columns, rows: rows)
-    let sheetName = "spritesheet.png"
-    try savePNG(sheet, to: outputDir + "/" + sheetName)
+    let sheetName = "\(options.spriteName).png"
+    let sheetURL = URL(fileURLWithPath: outputDir + "/" + sheetName)
+    try savePNG(sheet, to: sheetURL.path)
 
     let meta = SpriteSheetMetadata(
         image: sheetName,
@@ -806,14 +837,18 @@ do {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let json = try encoder.encode(meta)
-    let jsonName = "spritesheet.json"
-    try json.write(to: URL(fileURLWithPath: outputDir + "/" + jsonName))
+    let jsonName = "\(options.spriteName).json"
+    let jsonURL = URL(fileURLWithPath: outputDir + "/" + jsonName)
+    try json.write(to: jsonURL)
+    let installDir = try installSpriteAssets(imageURL: sheetURL, metadataURL: jsonURL)
 
     print("Created \(frames.count) frames in \(framesDir)")
     print("Grid: \(useUniformGrid ? "uniform" : "bordered") \(columns)x\(rows)")
     print("Frame size: \(frameWidth)x\(frameHeight)")
-    print("Sprite sheet: \(outputDir)/\(sheetName)")
-    print("Metadata: \(outputDir)/\(jsonName)")
+    print("Sprite sheet: \(sheetURL.path)")
+    print("Metadata: \(jsonURL.path)")
+    print("Installed: \(installDir.appendingPathComponent(sheetName).path)")
+    print("Installed metadata: \(installDir.appendingPathComponent(jsonName).path)")
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)

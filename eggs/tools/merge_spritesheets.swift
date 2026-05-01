@@ -129,9 +129,10 @@ struct InputSheet {
 func usage() -> String {
     """
     Usage:
-      merge_spritesheets <output-dir> <metadata.json> [metadata.json ...]
+      merge_spritesheets <output-dir> [--name <name>] <metadata.json> [metadata.json ...]
 
     Merges already-extracted regular-grid spritesheets vertically into one sheet.
+    If --name is omitted, writes <output-dir-name>_spritesheet.png/json.
     Sources may have different row counts and frame sizes; frames are centered into
     a common max frame size. All sources must have the same column count.
     """
@@ -155,6 +156,26 @@ func savePNG(_ image: RGBAImage, to path: String) throws {
     guard CGImageDestinationFinalize(destination) else {
         throw NSError(domain: "MergeSpritesheets", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to save PNG at \(path)"])
     }
+}
+
+func copyReplacingItem(from source: URL, to destination: URL) throws {
+    let sourcePath = source.standardizedFileURL.path
+    let destinationPath = destination.standardizedFileURL.path
+    guard sourcePath != destinationPath else { return }
+    if FileManager.default.fileExists(atPath: destination.path) {
+        try FileManager.default.removeItem(at: destination)
+    }
+    try FileManager.default.copyItem(at: source, to: destination)
+}
+
+func installSpriteAssets(imageURL: URL, metadataURL: URL) throws -> URL {
+    let installDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex")
+        .appendingPathComponent("eggs")
+    try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
+    try copyReplacingItem(from: imageURL, to: installDir.appendingPathComponent(imageURL.lastPathComponent))
+    try copyReplacingItem(from: metadataURL, to: installDir.appendingPathComponent(metadataURL.lastPathComponent))
+    return installDir
 }
 
 func crop(_ image: RGBAImage, rect: Rect) -> RGBAImage {
@@ -194,7 +215,19 @@ do {
     }
 
     let outputDir = URL(fileURLWithPath: args[1])
-    let metadataPaths = Array(args.dropFirst(2))
+    let defaultNameBase = outputDir.lastPathComponent.isEmpty ? "combined" : outputDir.lastPathComponent
+    let spriteName: String
+    let metadataPaths: [String]
+    if args[2] == "--name" {
+        guard args.count >= 5 else {
+            throw NSError(domain: "MergeSpritesheets", code: 7, userInfo: [NSLocalizedDescriptionKey: usage()])
+        }
+        spriteName = args[3]
+        metadataPaths = Array(args.dropFirst(4))
+    } else {
+        spriteName = "\(defaultNameBase)_spritesheet"
+        metadataPaths = Array(args.dropFirst(2))
+    }
     try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
     let decoder = JSONDecoder()
@@ -257,9 +290,11 @@ do {
         rowOffset += input.metadata.rows
     }
 
-    let imageName = "spritesheet.png"
-    let jsonName = "spritesheet.json"
-    try savePNG(output, to: outputDir.appendingPathComponent(imageName).path)
+    let imageName = "\(spriteName).png"
+    let jsonName = "\(spriteName).json"
+    let imageURL = outputDir.appendingPathComponent(imageName)
+    let jsonURL = outputDir.appendingPathComponent(jsonName)
+    try savePNG(output, to: imageURL.path)
 
     let metadata = MergedMetadata(
         image: imageName,
@@ -273,13 +308,16 @@ do {
     )
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try encoder.encode(metadata).write(to: outputDir.appendingPathComponent(jsonName))
+    try encoder.encode(metadata).write(to: jsonURL)
+    let installDir = try installSpriteAssets(imageURL: imageURL, metadataURL: jsonURL)
 
     print("Merged \(inputs.count) sheets")
     print("Grid: \(columns)x\(rows)")
     print("Frame size: \(frameWidth)x\(frameHeight)")
-    print("Sprite sheet: \(outputDir.appendingPathComponent(imageName).path)")
-    print("Metadata: \(outputDir.appendingPathComponent(jsonName).path)")
+    print("Sprite sheet: \(imageURL.path)")
+    print("Metadata: \(jsonURL.path)")
+    print("Installed: \(installDir.appendingPathComponent(imageName).path)")
+    print("Installed metadata: \(installDir.appendingPathComponent(jsonName).path)")
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)

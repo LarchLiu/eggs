@@ -7,11 +7,8 @@ let animationInterval: TimeInterval = 0.18
 let appDir = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".codex")
     .appendingPathComponent("eggs")
-let userSpritePath = appDir.appendingPathComponent("spritesheet.png").path
-let userMetadataPath = appDir.appendingPathComponent("spritesheet.json").path
-let statePath = appDir.appendingPathComponent("state.txt").path
-let bundledSpritePath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
-let bundledMetadataPath = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : ""
+let statePath = appDir.appendingPathComponent("state.json").path
+let bundledAssetsPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
 let stateNames = [
     "unborn",
     "ready",
@@ -26,6 +23,12 @@ let stateNames = [
     "attack",
 ]
 let defaultState = "unborn"
+let defaultSprite = "dino"
+
+struct RuntimeState {
+    let sprite: String
+    let state: String
+}
 
 func normalizedState(_ value: String) -> String? {
     let state = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,10 +85,32 @@ func normalizedState(_ value: String) -> String? {
 }
 
 func readState() -> String {
-    guard let value = try? String(contentsOfFile: statePath, encoding: .utf8) else {
-        return defaultState
+    return readRuntimeState().state
+}
+
+func normalizedSprite(_ value: String?) -> String {
+    guard let value else { return defaultSprite }
+    let stem = URL(fileURLWithPath: value.trimmingCharacters(in: .whitespacesAndNewlines)).deletingPathExtension().lastPathComponent
+    let allowed = stem.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    return allowed.isEmpty ? defaultSprite : String(allowed)
+}
+
+func readRuntimeState() -> RuntimeState {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)) else {
+        return RuntimeState(sprite: defaultSprite, state: defaultState)
     }
-    return normalizedState(value) ?? defaultState
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return RuntimeState(sprite: defaultSprite, state: defaultState)
+    }
+    var sprite = defaultSprite
+    var state = defaultState
+    if let rawSprite = object["sprite"] as? String {
+        sprite = normalizedSprite(rawSprite)
+    }
+    if let rawState = object["state"] as? String {
+        state = normalizedState(rawState) ?? state
+    }
+    return RuntimeState(sprite: sprite, state: state)
 }
 
 func color(_ hex: UInt32) -> NSColor {
@@ -107,17 +132,24 @@ func oval(_ rect: NSRect, fill: NSColor, stroke: NSColor? = nil, width: CGFloat 
 }
 
 struct SpriteSheetInfo {
+    let name: String
     let imagePath: String
     let metadataPath: String?
     let frameWidth: Int
     let frameHeight: Int
 }
 
-func activeSpritePaths() -> (image: String, metadata: String?) {
-    if FileManager.default.fileExists(atPath: userSpritePath) {
-        return (userSpritePath, FileManager.default.fileExists(atPath: userMetadataPath) ? userMetadataPath : nil)
+func activeSpritePaths(spriteName: String) -> (image: String, metadata: String?) {
+    let sprite = normalizedSprite(spriteName)
+    let userImage = appDir.appendingPathComponent("\(sprite).png").path
+    let userMetadata = appDir.appendingPathComponent("\(sprite).json").path
+    if FileManager.default.fileExists(atPath: userImage) {
+        return (userImage, FileManager.default.fileExists(atPath: userMetadata) ? userMetadata : nil)
     }
-    return (bundledSpritePath, FileManager.default.fileExists(atPath: bundledMetadataPath) ? bundledMetadataPath : nil)
+    let bundledAssets = URL(fileURLWithPath: bundledAssetsPath)
+    let bundledImage = bundledAssets.appendingPathComponent("\(sprite).png").path
+    let bundledMetadata = bundledAssets.appendingPathComponent("\(sprite).json").path
+    return (bundledImage, FileManager.default.fileExists(atPath: bundledMetadata) ? bundledMetadata : nil)
 }
 
 func metadataFrameSize(_ path: String?) -> (width: Int, height: Int)? {
@@ -133,8 +165,9 @@ func metadataFrameSize(_ path: String?) -> (width: Int, height: Int)? {
     return (width.intValue, height.intValue)
 }
 
-func loadSpriteSheetInfo() -> SpriteSheetInfo? {
-    let paths = activeSpritePaths()
+func loadSpriteSheetInfo(spriteName: String) -> SpriteSheetInfo? {
+    let sprite = normalizedSprite(spriteName)
+    let paths = activeSpritePaths(spriteName: sprite)
     guard !paths.image.isEmpty,
           let sheet = NSImage(contentsOfFile: paths.image),
           let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
@@ -144,6 +177,7 @@ func loadSpriteSheetInfo() -> SpriteSheetInfo? {
     let fallbackHeight = min(Int(defaultSpriteSize), cg.height)
     let frameSize = metadataFrameSize(paths.metadata) ?? (fallbackWidth, fallbackHeight)
     return SpriteSheetInfo(
+        name: sprite,
         imagePath: paths.image,
         metadataPath: paths.metadata,
         frameWidth: frameSize.width,
@@ -157,10 +191,11 @@ final class EggView: NSView {
     private var frameIndex = 0
     private var nextFrameAdvance = Date()
     private var frames: [NSImage] = []
-    private let spriteInfo: SpriteSheetInfo?
-    private var currentState = readState()
+    private var spriteInfo: SpriteSheetInfo?
+    private var currentRuntimeState = readRuntimeState()
     private var nextStateCheck = Date()
     private var dragOffset = NSPoint.zero
+    var onSpriteSizeChanged: ((CGFloat, CGFloat) -> Void)?
 
     override var isOpaque: Bool { false }
     override var isFlipped: Bool { true }
@@ -203,9 +238,9 @@ final class EggView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.clear.setFill()
         bounds.fill()
+        checkState()
 
         if !frames.isEmpty {
-            checkState()
             let stateFrames = framesForCurrentState()
             stateFrames[frameIndex % stateFrames.count].draw(in: bounds)
             if Date() >= nextFrameAdvance {
@@ -225,9 +260,17 @@ final class EggView: NSView {
 
     private func checkState() {
         guard Date() >= nextStateCheck else { return }
-        let nextState = readState()
-        if nextState != currentState {
-            currentState = nextState
+        let nextRuntimeState = readRuntimeState()
+        if nextRuntimeState.sprite != currentRuntimeState.sprite {
+            spriteInfo = loadSpriteSheetInfo(spriteName: nextRuntimeState.sprite)
+            frames = Self.loadFrames(spriteInfo: spriteInfo)
+            if let spriteInfo {
+                onSpriteSizeChanged?(CGFloat(spriteInfo.frameWidth), CGFloat(spriteInfo.frameHeight))
+            }
+            currentRuntimeState = nextRuntimeState
+            frameIndex = 0
+        } else if nextRuntimeState.state != currentRuntimeState.state {
+            currentRuntimeState = nextRuntimeState
             frameIndex = 0
         }
         nextStateCheck = Date().addingTimeInterval(0.2)
@@ -235,7 +278,7 @@ final class EggView: NSView {
 
     private func framesForCurrentState() -> [NSImage] {
         guard !frames.isEmpty else { return [] }
-        let stateIndex = stateNames.firstIndex(of: currentState) ?? 0
+        let stateIndex = stateNames.firstIndex(of: currentRuntimeState.state) ?? 0
         let framesPerState = max(1, frames.count / stateNames.count)
         let start = stateIndex * framesPerState
         let end = min(start + framesPerState, frames.count)
@@ -271,12 +314,13 @@ final class EggController {
     private var phase: CGFloat = 0
     private var nextTurn = Date().addingTimeInterval(Double.random(in: 4...9))
     private let screenFrame: NSRect
-    private let spriteWidth: CGFloat
-    private let spriteHeight: CGFloat
+    private var spriteWidth: CGFloat
+    private var spriteHeight: CGFloat
 
     init() {
         screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let spriteInfo = loadSpriteSheetInfo()
+        let runtimeState = readRuntimeState()
+        let spriteInfo = loadSpriteSheetInfo(spriteName: runtimeState.sprite)
         spriteWidth = CGFloat(spriteInfo?.frameWidth ?? Int(defaultSpriteSize))
         spriteHeight = CGFloat(spriteInfo?.frameHeight ?? Int(defaultSpriteSize))
         let maxStartX = max(screenFrame.minX, screenFrame.maxX - spriteWidth)
@@ -301,6 +345,9 @@ final class EggController {
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         window.contentView = view
+        view.onSpriteSizeChanged = { [weak self] width, height in
+            self?.resizeSprite(width: width, height: height)
+        }
         window.orderFrontRegardless()
     }
 
@@ -342,6 +389,16 @@ final class EggController {
         phase += 0.16
         view.phase = phase
         view.needsDisplay = true
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func resizeSprite(width: CGFloat, height: CGFloat) {
+        spriteWidth = width
+        spriteHeight = height
+        view.setFrameSize(NSSize(width: width, height: height))
+        window.setContentSize(NSSize(width: width, height: height))
+        x = min(max(window.frame.origin.x, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - spriteWidth))
+        y = min(max(window.frame.origin.y, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
         window.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }

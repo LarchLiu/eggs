@@ -50,13 +50,14 @@ python3 scripts/egg_desktop.py state attack
 To install a replacement spritesheet:
 
 ```bash
-python3 scripts/egg_desktop.py spritesheet /path/to/spritesheet.png
+python3 scripts/egg_desktop.py spritesheet /path/to/dino.png dino
 python3 scripts/egg_desktop.py restart
 ```
 
 ## Sprite Tools
 
 Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge desktop companion sprite sheets.
+When tools are run with `--name <sprite>`, they write `<sprite>.png` and `<sprite>.json` to the requested output directory and also install copies to `~/.codex/eggs/<sprite>.png` and `~/.codex/eggs/<sprite>.json`. If extraction is run without `--name`, use the input image stem and write `<input-name>_spritesheet.png/json`.
 
 Build tools into a temporary location instead of committing platform-specific binaries:
 
@@ -98,7 +99,7 @@ swiftc -module-cache-path "$PWD/.swift-module-cache" \
   eggs/tools/merge_spritesheets.swift \
   -o /tmp/merge_spritesheets
 
-/tmp/merge_spritesheets <output-dir> <sheet-a.json> <sheet-b.json>
+/tmp/merge_spritesheets <output-dir> [--name <sprite>] <sheet-a.json> <sheet-b.json>
 ```
 
 Validation helpers:
@@ -115,14 +116,15 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - On non-macOS, the manager falls back to its Python/Tk runtime. If Tkinter is unavailable, report that the local Python build cannot display the fallback GUI.
 - The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
 - Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.
-- The runtime first looks for a user-installed spritesheet at `~/.codex/eggs/spritesheet.png` with optional `~/.codex/eggs/spritesheet.json`, then the bundled skill assets at `assets/spritesheet.png` and `assets/spritesheet.json`, then falls back to a simple procedural placeholder drawing.
+- The runtime reads the current sprite and state from `~/.codex/eggs/state.json`.
+- The runtime first looks for a user-installed sprite at `~/.codex/eggs/<sprite>.png` with optional `~/.codex/eggs/<sprite>.json`, then bundled skill assets at `assets/<sprite>.png` and `assets/<sprite>.json`, then falls back to a simple procedural placeholder drawing.
 - Resolve bundled assets relative to this installed skill directory; never rely on the original repo path or any `/Users/...` absolute path.
-- Do not hardcode the frame size. The animation runtime reads `frameWidth` and `frameHeight` from `spritesheet.json` to slice the PNG and size the desktop window. It only falls back to 251x251 if metadata is missing or invalid.
+- Do not hardcode the frame size. The animation runtime reads `frameWidth` and `frameHeight` from `<sprite>.json` to slice the PNG and size the desktop window. It only falls back to 251x251 if metadata is missing or invalid.
 - The bundled spritesheet currently has 251x251 frames in a 5x11 regular grid.
-- `assets/spritesheet.json` keeps `image` as `spritesheet.png`, relative to the JSON file's own directory. Generated sprite metadata should stay portable in the same way.
+- `assets/dino.json` keeps `image` as `dino.png`, relative to the JSON file's own directory. Generated sprite metadata should stay portable in the same way.
 - Each row is a state: `unborn`, `ready`, `hatching`, `hatched`, `walk`, `sleep`, `eat`, `drink`, `play`, `roar`, `attack`.
 - Chinese state requests are supported through aliases such as `睡觉`, `吃鸡腿`, `喝水`, `玩耍`, `咆哮`, and `攻击`.
-- The `state` command writes `~/.codex/eggs/state.txt`; running windows poll it and switch animation rows without restarting.
+- The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
 - The desktop window can be repositioned by dragging it with the mouse.
 - Sprite preparation tools are bundled under `tools/`; do not rely on old root-level compiled binaries.
 
