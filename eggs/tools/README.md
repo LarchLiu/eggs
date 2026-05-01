@@ -1,6 +1,6 @@
-# Egg Sprite Tools
+# Sprite Tools
 
-Small Swift tools for preparing the sprite sheets used by the `eggs` skill.
+Small Swift tools for preparing the sprite sheets used by the desktop companion skill.
 
 These are source tools, not portable binaries. Compile them locally on macOS when needed.
 

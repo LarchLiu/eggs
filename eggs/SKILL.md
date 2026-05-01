@@ -1,13 +1,13 @@
 ---
 name: eggs
-description: Spawn, stop, change state, or manage a standalone animated 2D desktop egg hatchling companion. Use when the user invokes `/eggs`, asks for an egg on their desktop, wants an animated egg hatch sprite companion, or asks to stop/status/restart/change the egg process.
+description: Spawn, stop, change state, or manage a standalone animated 2D desktop sprite companion. Use when the user invokes `/eggs`, asks for an animated desktop companion, wants a roaming sprite character, or asks to stop/status/restart/change the companion process.
 ---
 
 # Eggs
 
 ## Quick Start
 
-When the user asks to spawn the egg, including `/eggs`, run the bundled runtime from this skill directory:
+When the user asks to spawn the desktop companion, including `/eggs`, run the bundled runtime from this skill directory:
 
 ```bash
 python3 scripts/egg_desktop.py start
@@ -56,7 +56,7 @@ python3 scripts/egg_desktop.py restart
 
 ## Sprite Tools
 
-Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge egg/dinosaur sprite sheets.
+Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge desktop companion sprite sheets.
 
 Build tools into a temporary location instead of committing platform-specific binaries:
 
@@ -114,8 +114,8 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - On macOS, the manager compiles and launches the bundled native Swift/Cocoa overlay at first run. This requires `python3` and the macOS Swift compiler, but no npm, Electron, PyPI packages, or external assets.
 - On non-macOS, the manager falls back to its Python/Tk runtime. If Tkinter is unavailable, report that the local Python build cannot display the fallback GUI.
 - The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
-- Re-running `start` should not create duplicates; use `restart` when the user wants a fresh egg.
-- The runtime first looks for a user-installed spritesheet at `~/.codex/eggs/spritesheet.png` with optional `~/.codex/eggs/spritesheet.json`, then the bundled skill assets at `assets/spritesheet.png` and `assets/spritesheet.json`, then falls back to a procedural egg drawing.
+- Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.
+- The runtime first looks for a user-installed spritesheet at `~/.codex/eggs/spritesheet.png` with optional `~/.codex/eggs/spritesheet.json`, then the bundled skill assets at `assets/spritesheet.png` and `assets/spritesheet.json`, then falls back to a simple procedural placeholder drawing.
 - Resolve bundled assets relative to this installed skill directory; never rely on the original repo path or any `/Users/...` absolute path.
 - Do not hardcode the frame size. The animation runtime reads `frameWidth` and `frameHeight` from `spritesheet.json` to slice the PNG and size the desktop window. It only falls back to 251x251 if metadata is missing or invalid.
 - The bundled spritesheet currently has 251x251 frames in a 5x11 regular grid.
@@ -128,4 +128,4 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 
 ## Notes For Codex
 
-If the user types `/eggs` or says "spawn eggs", do the start action immediately and briefly report whether it launched. If the user asks to change egg state, run the `state` command with the closest matching state name. Do not open or explain the script unless launch fails.
+If the user types `/eggs` or asks to spawn the companion, do the start action immediately and briefly report whether it launched. If the user asks to change companion state, run the `state` command with the closest matching state name. Do not open or explain the script unless launch fails.
