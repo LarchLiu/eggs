@@ -1,2 +1,8 @@
+.DS_Store
 .swift-module-cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
 assets
+goblins

@@ -143,7 +143,7 @@ func usage() -> String {
       --columns <n>              Override detected column count.
       --rows <n>                 Override detected row count.
       --frame-size <w>x<h>|<n>   Override output frame canvas size.
-      --prefix <name>            Output filename prefix. Defaults to output directory name.
+      --prefix <name>            Individual frame filename prefix. Defaults to output directory name.
       --border-threshold <n>     Border detection threshold, 0.0-1.0. Default: 0.75.
       --padding <px>             Pixels to trim inward from detected cell borders. Default: 5.
       --align <mode>             preserve-cell or center-content. Default: preserve-cell.
@@ -791,7 +791,7 @@ do {
     }
 
     let sheet = combineFrames(frames, columns: columns, rows: rows)
-    let sheetName = "\(options.prefix)_spritesheet.png"
+    let sheetName = "spritesheet.png"
     try savePNG(sheet, to: outputDir + "/" + sheetName)
 
     let meta = SpriteSheetMetadata(
@@ -806,7 +806,7 @@ do {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let json = try encoder.encode(meta)
-    let jsonName = "\(options.prefix)_spritesheet.json"
+    let jsonName = "spritesheet.json"
     try json.write(to: URL(fileURLWithPath: outputDir + "/" + jsonName))
 
     print("Created \(frames.count) frames in \(framesDir)")

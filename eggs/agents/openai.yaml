@@ -1,0 +1,4 @@
+interface:
+  display_name: "Eggs"
+  short_description: "Spawn and state-switch a roaming desktop egg."
+  default_prompt: "Use $eggs to spawn an animated 2D egg hatchling on my desktop, then switch its state."
