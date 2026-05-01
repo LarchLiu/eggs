@@ -31,6 +31,29 @@ For restart:
 python3 scripts/egg_desktop.py restart
 ```
 
+Remote interaction is opt-in. To connect this skill to a separately deployed remote sprite server:
+
+```bash
+python3 scripts/egg_desktop.py remote server http://localhost:8787
+python3 scripts/egg_desktop.py remote upload dino
+python3 scripts/egg_desktop.py remote random
+python3 scripts/egg_desktop.py restart
+```
+
+For invite rooms:
+
+```bash
+python3 scripts/egg_desktop.py remote room ABC123
+python3 scripts/egg_desktop.py restart
+```
+
+To leave:
+
+```bash
+python3 scripts/egg_desktop.py remote leave
+python3 scripts/egg_desktop.py restart
+```
+
 For state changes:
 
 ```bash
@@ -113,6 +136,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 
 - Use only the bundled `scripts/egg_desktop.py`; it has no third-party Python dependencies.
 - On macOS, the manager compiles and launches the bundled native Swift/Cocoa overlay at first run. This requires `python3` and the macOS Swift compiler, but no npm, Electron, PyPI packages, or external assets.
+- When remote interaction is enabled, the manager launches the Python/Tk runtime instead of the Swift runtime so it can display multiple remote actors and synchronize over WebSocket.
 - On non-macOS, the manager falls back to its Python/Tk runtime. If Tkinter is unavailable, report that the local Python build cannot display the fallback GUI.
 - The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
 - Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.
@@ -128,6 +152,8 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - Chinese state requests are supported through aliases such as `睡觉`, `吃鸡腿`, `喝水`, `玩耍`, `咆哮`, and `攻击`.
 - The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
 - The desktop window can be repositioned by dragging it with the mouse.
+- Remote settings are stored in `~/.codex/eggs/remote.json`, anonymous device identity in `~/.codex/eggs/client.json`, and downloaded remote sprites in `~/.codex/eggs/remote/<sprite_id>/`. Remote cache never overwrites local `<sprite>.png/json`.
+- The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
 - Sprite preparation tools are bundled under `tools/`; do not rely on old root-level compiled binaries.
 
 ## Notes For Codex
