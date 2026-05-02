@@ -601,7 +601,7 @@ func readJSONFrameWithTimeout(t *testing.T, conn net.Conn, timeout time.Duration
 	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		t.Fatal(err)
 	}
-	payload, err := readWebSocketFrame(bufio.NewReader(conn))
+	_, payload, err := readWebSocketFrame(bufio.NewReader(conn))
 	if err != nil {
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			_ = conn.SetReadDeadline(time.Time{})

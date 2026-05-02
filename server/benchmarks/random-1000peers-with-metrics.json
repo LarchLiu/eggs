@@ -1,0 +1,29 @@
+{
+  "mode": "random",
+  "room": "",
+  "pairs": 500,
+  "peers": 1000,
+  "peers_file": "benchmarks/bench-1000peers.json",
+  "expected_per_peer": 1,
+  "min_room_snapshot": 1,
+  "min_peer_joined": 1,
+  "min_peer_state": 1,
+  "max_room_snapshot": 1,
+  "max_peer_joined": 1,
+  "max_peer_state": 1,
+  "errors": [],
+  "process": {
+    "pid": 10513,
+    "sample_count": 20,
+    "cpu_percent": {
+      "min": 0.0,
+      "avg": 2.36,
+      "max": 23.1
+    },
+    "rss_mb": {
+      "min": 63.422,
+      "avg": 63.57,
+      "max": 63.578
+    }
+  }
+}

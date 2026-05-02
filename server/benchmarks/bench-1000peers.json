@@ -1,0 +1,4006 @@
+{
+  "server": "http://127.0.0.1:18790",
+  "prefix": "bench",
+  "peers": [
+    {
+      "device_id": "bench-device-0000",
+      "sprite": "bench0000"
+    },
+    {
+      "device_id": "bench-device-0001",
+      "sprite": "bench0001"
+    },
+    {
+      "device_id": "bench-device-0002",
+      "sprite": "bench0002"
+    },
+    {
+      "device_id": "bench-device-0003",
+      "sprite": "bench0003"
+    },
+    {
+      "device_id": "bench-device-0004",
+      "sprite": "bench0004"
+    },
+    {
+      "device_id": "bench-device-0005",
+      "sprite": "bench0005"
+    },
+    {
+      "device_id": "bench-device-0006",
+      "sprite": "bench0006"
+    },
+    {
+      "device_id": "bench-device-0007",
+      "sprite": "bench0007"
+    },
+    {
+      "device_id": "bench-device-0008",
+      "sprite": "bench0008"
+    },
+    {
+      "device_id": "bench-device-0009",
+      "sprite": "bench0009"
+    },
+    {
+      "device_id": "bench-device-0010",
+      "sprite": "bench0010"
+    },
+    {
+      "device_id": "bench-device-0011",
+      "sprite": "bench0011"
+    },
+    {
+      "device_id": "bench-device-0012",
+      "sprite": "bench0012"
+    },
+    {
+      "device_id": "bench-device-0013",
+      "sprite": "bench0013"
+    },
+    {
+      "device_id": "bench-device-0014",
+      "sprite": "bench0014"
+    },
+    {
+      "device_id": "bench-device-0015",
+      "sprite": "bench0015"
+    },
+    {
+      "device_id": "bench-device-0016",
+      "sprite": "bench0016"
+    },
+    {
+      "device_id": "bench-device-0017",
+      "sprite": "bench0017"
+    },
+    {
+      "device_id": "bench-device-0018",
+      "sprite": "bench0018"
+    },
+    {
+      "device_id": "bench-device-0019",
+      "sprite": "bench0019"
+    },
+    {
+      "device_id": "bench-device-0020",
+      "sprite": "bench0020"
+    },
+    {
+      "device_id": "bench-device-0021",
+      "sprite": "bench0021"
+    },
+    {
+      "device_id": "bench-device-0022",
+      "sprite": "bench0022"
+    },
+    {
+      "device_id": "bench-device-0023",
+      "sprite": "bench0023"
+    },
+    {
+      "device_id": "bench-device-0024",
+      "sprite": "bench0024"
+    },
+    {
+      "device_id": "bench-device-0025",
+      "sprite": "bench0025"
+    },
+    {
+      "device_id": "bench-device-0026",
+      "sprite": "bench0026"
+    },
+    {
+      "device_id": "bench-device-0027",
+      "sprite": "bench0027"
+    },
+    {
+      "device_id": "bench-device-0028",
+      "sprite": "bench0028"
+    },
+    {
+      "device_id": "bench-device-0029",
+      "sprite": "bench0029"
+    },
+    {
+      "device_id": "bench-device-0030",
+      "sprite": "bench0030"
+    },
+    {
+      "device_id": "bench-device-0031",
+      "sprite": "bench0031"
+    },
+    {
+      "device_id": "bench-device-0032",
+      "sprite": "bench0032"
+    },
+    {
+      "device_id": "bench-device-0033",
+      "sprite": "bench0033"
+    },
+    {
+      "device_id": "bench-device-0034",
+      "sprite": "bench0034"
+    },
+    {
+      "device_id": "bench-device-0035",
+      "sprite": "bench0035"
+    },
+    {
+      "device_id": "bench-device-0036",
+      "sprite": "bench0036"
+    },
+    {
+      "device_id": "bench-device-0037",
+      "sprite": "bench0037"
+    },
+    {
+      "device_id": "bench-device-0038",
+      "sprite": "bench0038"
+    },
+    {
+      "device_id": "bench-device-0039",
+      "sprite": "bench0039"
+    },
+    {
+      "device_id": "bench-device-0040",
+      "sprite": "bench0040"
+    },
+    {
+      "device_id": "bench-device-0041",
+      "sprite": "bench0041"
+    },
+    {
+      "device_id": "bench-device-0042",
+      "sprite": "bench0042"
+    },
+    {
+      "device_id": "bench-device-0043",
+      "sprite": "bench0043"
+    },
+    {
+      "device_id": "bench-device-0044",
+      "sprite": "bench0044"
+    },
+    {
+      "device_id": "bench-device-0045",
+      "sprite": "bench0045"
+    },
+    {
+      "device_id": "bench-device-0046",
+      "sprite": "bench0046"
+    },
+    {
+      "device_id": "bench-device-0047",
+      "sprite": "bench0047"
+    },
+    {
+      "device_id": "bench-device-0048",
+      "sprite": "bench0048"
+    },
+    {
+      "device_id": "bench-device-0049",
+      "sprite": "bench0049"
+    },
+    {
+      "device_id": "bench-device-0050",
+      "sprite": "bench0050"
+    },
+    {
+      "device_id": "bench-device-0051",
+      "sprite": "bench0051"
+    },
+    {
+      "device_id": "bench-device-0052",
+      "sprite": "bench0052"
+    },
+    {
+      "device_id": "bench-device-0053",
+      "sprite": "bench0053"
+    },
+    {
+      "device_id": "bench-device-0054",
+      "sprite": "bench0054"
+    },
+    {
+      "device_id": "bench-device-0055",
+      "sprite": "bench0055"
+    },
+    {
+      "device_id": "bench-device-0056",
+      "sprite": "bench0056"
+    },
+    {
+      "device_id": "bench-device-0057",
+      "sprite": "bench0057"
+    },
+    {
+      "device_id": "bench-device-0058",
+      "sprite": "bench0058"
+    },
+    {
+      "device_id": "bench-device-0059",
+      "sprite": "bench0059"
+    },
+    {
+      "device_id": "bench-device-0060",
+      "sprite": "bench0060"
+    },
+    {
+      "device_id": "bench-device-0061",
+      "sprite": "bench0061"
+    },
+    {
+      "device_id": "bench-device-0062",
+      "sprite": "bench0062"
+    },
+    {
+      "device_id": "bench-device-0063",
+      "sprite": "bench0063"
+    },
+    {
+      "device_id": "bench-device-0064",
+      "sprite": "bench0064"
+    },
+    {
+      "device_id": "bench-device-0065",
+      "sprite": "bench0065"
+    },
+    {
+      "device_id": "bench-device-0066",
+      "sprite": "bench0066"
+    },
+    {
+      "device_id": "bench-device-0067",
+      "sprite": "bench0067"
+    },
+    {
+      "device_id": "bench-device-0068",
+      "sprite": "bench0068"
+    },
+    {
+      "device_id": "bench-device-0069",
+      "sprite": "bench0069"
+    },
+    {
+      "device_id": "bench-device-0070",
+      "sprite": "bench0070"
+    },
+    {
+      "device_id": "bench-device-0071",
+      "sprite": "bench0071"
+    },
+    {
+      "device_id": "bench-device-0072",
+      "sprite": "bench0072"
+    },
+    {
+      "device_id": "bench-device-0073",
+      "sprite": "bench0073"
+    },
+    {
+      "device_id": "bench-device-0074",
+      "sprite": "bench0074"
+    },
+    {
+      "device_id": "bench-device-0075",
+      "sprite": "bench0075"
+    },
+    {
+      "device_id": "bench-device-0076",
+      "sprite": "bench0076"
+    },
+    {
+      "device_id": "bench-device-0077",
+      "sprite": "bench0077"
+    },
+    {
+      "device_id": "bench-device-0078",
+      "sprite": "bench0078"
+    },
+    {
+      "device_id": "bench-device-0079",
+      "sprite": "bench0079"
+    },
+    {
+      "device_id": "bench-device-0080",
+      "sprite": "bench0080"
+    },
+    {
+      "device_id": "bench-device-0081",
+      "sprite": "bench0081"
+    },
+    {
+      "device_id": "bench-device-0082",
+      "sprite": "bench0082"
+    },
+    {
+      "device_id": "bench-device-0083",
+      "sprite": "bench0083"
+    },
+    {
+      "device_id": "bench-device-0084",
+      "sprite": "bench0084"
+    },
+    {
+      "device_id": "bench-device-0085",
+      "sprite": "bench0085"
+    },
+    {
+      "device_id": "bench-device-0086",
+      "sprite": "bench0086"
+    },
+    {
+      "device_id": "bench-device-0087",
+      "sprite": "bench0087"
+    },
+    {
+      "device_id": "bench-device-0088",
+      "sprite": "bench0088"
+    },
+    {
+      "device_id": "bench-device-0089",
+      "sprite": "bench0089"
+    },
+    {
+      "device_id": "bench-device-0090",
+      "sprite": "bench0090"
+    },
+    {
+      "device_id": "bench-device-0091",
+      "sprite": "bench0091"
+    },
+    {
+      "device_id": "bench-device-0092",
+      "sprite": "bench0092"
+    },
+    {
+      "device_id": "bench-device-0093",
+      "sprite": "bench0093"
+    },
+    {
+      "device_id": "bench-device-0094",
+      "sprite": "bench0094"
+    },
+    {
+      "device_id": "bench-device-0095",
+      "sprite": "bench0095"
+    },
+    {
+      "device_id": "bench-device-0096",
+      "sprite": "bench0096"
+    },
+    {
+      "device_id": "bench-device-0097",
+      "sprite": "bench0097"
+    },
+    {
+      "device_id": "bench-device-0098",
+      "sprite": "bench0098"
+    },
+    {
+      "device_id": "bench-device-0099",
+      "sprite": "bench0099"
+    },
+    {
+      "device_id": "bench-device-0100",
+      "sprite": "bench0100"
+    },
+    {
+      "device_id": "bench-device-0101",
+      "sprite": "bench0101"
+    },
+    {
+      "device_id": "bench-device-0102",
+      "sprite": "bench0102"
+    },
+    {
+      "device_id": "bench-device-0103",
+      "sprite": "bench0103"
+    },
+    {
+      "device_id": "bench-device-0104",
+      "sprite": "bench0104"
+    },
+    {
+      "device_id": "bench-device-0105",
+      "sprite": "bench0105"
+    },
+    {
+      "device_id": "bench-device-0106",
+      "sprite": "bench0106"
+    },
+    {
+      "device_id": "bench-device-0107",
+      "sprite": "bench0107"
+    },
+    {
+      "device_id": "bench-device-0108",
+      "sprite": "bench0108"
+    },
+    {
+      "device_id": "bench-device-0109",
+      "sprite": "bench0109"
+    },
+    {
+      "device_id": "bench-device-0110",
+      "sprite": "bench0110"
+    },
+    {
+      "device_id": "bench-device-0111",
+      "sprite": "bench0111"
+    },
+    {
+      "device_id": "bench-device-0112",
+      "sprite": "bench0112"
+    },
+    {
+      "device_id": "bench-device-0113",
+      "sprite": "bench0113"
+    },
+    {
+      "device_id": "bench-device-0114",
+      "sprite": "bench0114"
+    },
+    {
+      "device_id": "bench-device-0115",
+      "sprite": "bench0115"
+    },
+    {
+      "device_id": "bench-device-0116",
+      "sprite": "bench0116"
+    },
+    {
+      "device_id": "bench-device-0117",
+      "sprite": "bench0117"
+    },
+    {
+      "device_id": "bench-device-0118",
+      "sprite": "bench0118"
+    },
+    {
+      "device_id": "bench-device-0119",
+      "sprite": "bench0119"
+    },
+    {
+      "device_id": "bench-device-0120",
+      "sprite": "bench0120"
+    },
+    {
+      "device_id": "bench-device-0121",
+      "sprite": "bench0121"
+    },
+    {
+      "device_id": "bench-device-0122",
+      "sprite": "bench0122"
+    },
+    {
+      "device_id": "bench-device-0123",
+      "sprite": "bench0123"
+    },
+    {
+      "device_id": "bench-device-0124",
+      "sprite": "bench0124"
+    },
+    {
+      "device_id": "bench-device-0125",
+      "sprite": "bench0125"
+    },
+    {
+      "device_id": "bench-device-0126",
+      "sprite": "bench0126"
+    },
+    {
+      "device_id": "bench-device-0127",
+      "sprite": "bench0127"
+    },
+    {
+      "device_id": "bench-device-0128",
+      "sprite": "bench0128"
+    },
+    {
+      "device_id": "bench-device-0129",
+      "sprite": "bench0129"
+    },
+    {
+      "device_id": "bench-device-0130",
+      "sprite": "bench0130"
+    },
+    {
+      "device_id": "bench-device-0131",
+      "sprite": "bench0131"
+    },
+    {
+      "device_id": "bench-device-0132",
+      "sprite": "bench0132"
+    },
+    {
+      "device_id": "bench-device-0133",
+      "sprite": "bench0133"
+    },
+    {
+      "device_id": "bench-device-0134",
+      "sprite": "bench0134"
+    },
+    {
+      "device_id": "bench-device-0135",
+      "sprite": "bench0135"
+    },
+    {
+      "device_id": "bench-device-0136",
+      "sprite": "bench0136"
+    },
+    {
+      "device_id": "bench-device-0137",
+      "sprite": "bench0137"
+    },
+    {
+      "device_id": "bench-device-0138",
+      "sprite": "bench0138"
+    },
+    {
+      "device_id": "bench-device-0139",
+      "sprite": "bench0139"
+    },
+    {
+      "device_id": "bench-device-0140",
+      "sprite": "bench0140"
+    },
+    {
+      "device_id": "bench-device-0141",
+      "sprite": "bench0141"
+    },
+    {
+      "device_id": "bench-device-0142",
+      "sprite": "bench0142"
+    },
+    {
+      "device_id": "bench-device-0143",
+      "sprite": "bench0143"
+    },
+    {
+      "device_id": "bench-device-0144",
+      "sprite": "bench0144"
+    },
+    {
+      "device_id": "bench-device-0145",
+      "sprite": "bench0145"
+    },
+    {
+      "device_id": "bench-device-0146",
+      "sprite": "bench0146"
+    },
+    {
+      "device_id": "bench-device-0147",
+      "sprite": "bench0147"
+    },
+    {
+      "device_id": "bench-device-0148",
+      "sprite": "bench0148"
+    },
+    {
+      "device_id": "bench-device-0149",
+      "sprite": "bench0149"
+    },
+    {
+      "device_id": "bench-device-0150",
+      "sprite": "bench0150"
+    },
+    {
+      "device_id": "bench-device-0151",
+      "sprite": "bench0151"
+    },
+    {
+      "device_id": "bench-device-0152",
+      "sprite": "bench0152"
+    },
+    {
+      "device_id": "bench-device-0153",
+      "sprite": "bench0153"
+    },
+    {
+      "device_id": "bench-device-0154",
+      "sprite": "bench0154"
+    },
+    {
+      "device_id": "bench-device-0155",
+      "sprite": "bench0155"
+    },
+    {
+      "device_id": "bench-device-0156",
+      "sprite": "bench0156"
+    },
+    {
+      "device_id": "bench-device-0157",
+      "sprite": "bench0157"
+    },
+    {
+      "device_id": "bench-device-0158",
+      "sprite": "bench0158"
+    },
+    {
+      "device_id": "bench-device-0159",
+      "sprite": "bench0159"
+    },
+    {
+      "device_id": "bench-device-0160",
+      "sprite": "bench0160"
+    },
+    {
+      "device_id": "bench-device-0161",
+      "sprite": "bench0161"
+    },
+    {
+      "device_id": "bench-device-0162",
+      "sprite": "bench0162"
+    },
+    {
+      "device_id": "bench-device-0163",
+      "sprite": "bench0163"
+    },
+    {
+      "device_id": "bench-device-0164",
+      "sprite": "bench0164"
+    },
+    {
+      "device_id": "bench-device-0165",
+      "sprite": "bench0165"
+    },
+    {
+      "device_id": "bench-device-0166",
+      "sprite": "bench0166"
+    },
+    {
+      "device_id": "bench-device-0167",
+      "sprite": "bench0167"
+    },
+    {
+      "device_id": "bench-device-0168",
+      "sprite": "bench0168"
+    },
+    {
+      "device_id": "bench-device-0169",
+      "sprite": "bench0169"
+    },
+    {
+      "device_id": "bench-device-0170",
+      "sprite": "bench0170"
+    },
+    {
+      "device_id": "bench-device-0171",
+      "sprite": "bench0171"
+    },
+    {
+      "device_id": "bench-device-0172",
+      "sprite": "bench0172"
+    },
+    {
+      "device_id": "bench-device-0173",
+      "sprite": "bench0173"
+    },
+    {
+      "device_id": "bench-device-0174",
+      "sprite": "bench0174"
+    },
+    {
+      "device_id": "bench-device-0175",
+      "sprite": "bench0175"
+    },
+    {
+      "device_id": "bench-device-0176",
+      "sprite": "bench0176"
+    },
+    {
+      "device_id": "bench-device-0177",
+      "sprite": "bench0177"
+    },
+    {
+      "device_id": "bench-device-0178",
+      "sprite": "bench0178"
+    },
+    {
+      "device_id": "bench-device-0179",
+      "sprite": "bench0179"
+    },
+    {
+      "device_id": "bench-device-0180",
+      "sprite": "bench0180"
+    },
+    {
+      "device_id": "bench-device-0181",
+      "sprite": "bench0181"
+    },
+    {
+      "device_id": "bench-device-0182",
+      "sprite": "bench0182"
+    },
+    {
+      "device_id": "bench-device-0183",
+      "sprite": "bench0183"
+    },
+    {
+      "device_id": "bench-device-0184",
+      "sprite": "bench0184"
+    },
+    {
+      "device_id": "bench-device-0185",
+      "sprite": "bench0185"
+    },
+    {
+      "device_id": "bench-device-0186",
+      "sprite": "bench0186"
+    },
+    {
+      "device_id": "bench-device-0187",
+      "sprite": "bench0187"
+    },
+    {
+      "device_id": "bench-device-0188",
+      "sprite": "bench0188"
+    },
+    {
+      "device_id": "bench-device-0189",
+      "sprite": "bench0189"
+    },
+    {
+      "device_id": "bench-device-0190",
+      "sprite": "bench0190"
+    },
+    {
+      "device_id": "bench-device-0191",
+      "sprite": "bench0191"
+    },
+    {
+      "device_id": "bench-device-0192",
+      "sprite": "bench0192"
+    },
+    {
+      "device_id": "bench-device-0193",
+      "sprite": "bench0193"
+    },
+    {
+      "device_id": "bench-device-0194",
+      "sprite": "bench0194"
+    },
+    {
+      "device_id": "bench-device-0195",
+      "sprite": "bench0195"
+    },
+    {
+      "device_id": "bench-device-0196",
+      "sprite": "bench0196"
+    },
+    {
+      "device_id": "bench-device-0197",
+      "sprite": "bench0197"
+    },
+    {
+      "device_id": "bench-device-0198",
+      "sprite": "bench0198"
+    },
+    {
+      "device_id": "bench-device-0199",
+      "sprite": "bench0199"
+    },
+    {
+      "device_id": "bench-device-0200",
+      "sprite": "bench0200"
+    },
+    {
+      "device_id": "bench-device-0201",
+      "sprite": "bench0201"
+    },
+    {
+      "device_id": "bench-device-0202",
+      "sprite": "bench0202"
+    },
+    {
+      "device_id": "bench-device-0203",
+      "sprite": "bench0203"
+    },
+    {
+      "device_id": "bench-device-0204",
+      "sprite": "bench0204"
+    },
+    {
+      "device_id": "bench-device-0205",
+      "sprite": "bench0205"
+    },
+    {
+      "device_id": "bench-device-0206",
+      "sprite": "bench0206"
+    },
+    {
+      "device_id": "bench-device-0207",
+      "sprite": "bench0207"
+    },
+    {
+      "device_id": "bench-device-0208",
+      "sprite": "bench0208"
+    },
+    {
+      "device_id": "bench-device-0209",
+      "sprite": "bench0209"
+    },
+    {
+      "device_id": "bench-device-0210",
+      "sprite": "bench0210"
+    },
+    {
+      "device_id": "bench-device-0211",
+      "sprite": "bench0211"
+    },
+    {
+      "device_id": "bench-device-0212",
+      "sprite": "bench0212"
+    },
+    {
+      "device_id": "bench-device-0213",
+      "sprite": "bench0213"
+    },
+    {
+      "device_id": "bench-device-0214",
+      "sprite": "bench0214"
+    },
+    {
+      "device_id": "bench-device-0215",
+      "sprite": "bench0215"
+    },
+    {
+      "device_id": "bench-device-0216",
+      "sprite": "bench0216"
+    },
+    {
+      "device_id": "bench-device-0217",
+      "sprite": "bench0217"
+    },
+    {
+      "device_id": "bench-device-0218",
+      "sprite": "bench0218"
+    },
+    {
+      "device_id": "bench-device-0219",
+      "sprite": "bench0219"
+    },
+    {
+      "device_id": "bench-device-0220",
+      "sprite": "bench0220"
+    },
+    {
+      "device_id": "bench-device-0221",
+      "sprite": "bench0221"
+    },
+    {
+      "device_id": "bench-device-0222",
+      "sprite": "bench0222"
+    },
+    {
+      "device_id": "bench-device-0223",
+      "sprite": "bench0223"
+    },
+    {
+      "device_id": "bench-device-0224",
+      "sprite": "bench0224"
+    },
+    {
+      "device_id": "bench-device-0225",
+      "sprite": "bench0225"
+    },
+    {
+      "device_id": "bench-device-0226",
+      "sprite": "bench0226"
+    },
+    {
+      "device_id": "bench-device-0227",
+      "sprite": "bench0227"
+    },
+    {
+      "device_id": "bench-device-0228",
+      "sprite": "bench0228"
+    },
+    {
+      "device_id": "bench-device-0229",
+      "sprite": "bench0229"
+    },
+    {
+      "device_id": "bench-device-0230",
+      "sprite": "bench0230"
+    },
+    {
+      "device_id": "bench-device-0231",
+      "sprite": "bench0231"
+    },
+    {
+      "device_id": "bench-device-0232",
+      "sprite": "bench0232"
+    },
+    {
+      "device_id": "bench-device-0233",
+      "sprite": "bench0233"
+    },
+    {
+      "device_id": "bench-device-0234",
+      "sprite": "bench0234"
+    },
+    {
+      "device_id": "bench-device-0235",
+      "sprite": "bench0235"
+    },
+    {
+      "device_id": "bench-device-0236",
+      "sprite": "bench0236"
+    },
+    {
+      "device_id": "bench-device-0237",
+      "sprite": "bench0237"
+    },
+    {
+      "device_id": "bench-device-0238",
+      "sprite": "bench0238"
+    },
+    {
+      "device_id": "bench-device-0239",
+      "sprite": "bench0239"
+    },
+    {
+      "device_id": "bench-device-0240",
+      "sprite": "bench0240"
+    },
+    {
+      "device_id": "bench-device-0241",
+      "sprite": "bench0241"
+    },
+    {
+      "device_id": "bench-device-0242",
+      "sprite": "bench0242"
+    },
+    {
+      "device_id": "bench-device-0243",
+      "sprite": "bench0243"
+    },
+    {
+      "device_id": "bench-device-0244",
+      "sprite": "bench0244"
+    },
+    {
+      "device_id": "bench-device-0245",
+      "sprite": "bench0245"
+    },
+    {
+      "device_id": "bench-device-0246",
+      "sprite": "bench0246"
+    },
+    {
+      "device_id": "bench-device-0247",
+      "sprite": "bench0247"
+    },
+    {
+      "device_id": "bench-device-0248",
+      "sprite": "bench0248"
+    },
+    {
+      "device_id": "bench-device-0249",
+      "sprite": "bench0249"
+    },
+    {
+      "device_id": "bench-device-0250",
+      "sprite": "bench0250"
+    },
+    {
+      "device_id": "bench-device-0251",
+      "sprite": "bench0251"
+    },
+    {
+      "device_id": "bench-device-0252",
+      "sprite": "bench0252"
+    },
+    {
+      "device_id": "bench-device-0253",
+      "sprite": "bench0253"
+    },
+    {
+      "device_id": "bench-device-0254",
+      "sprite": "bench0254"
+    },
+    {
+      "device_id": "bench-device-0255",
+      "sprite": "bench0255"
+    },
+    {
+      "device_id": "bench-device-0256",
+      "sprite": "bench0256"
+    },
+    {
+      "device_id": "bench-device-0257",
+      "sprite": "bench0257"
+    },
+    {
+      "device_id": "bench-device-0258",
+      "sprite": "bench0258"
+    },
+    {
+      "device_id": "bench-device-0259",
+      "sprite": "bench0259"
+    },
+    {
+      "device_id": "bench-device-0260",
+      "sprite": "bench0260"
+    },
+    {
+      "device_id": "bench-device-0261",
+      "sprite": "bench0261"
+    },
+    {
+      "device_id": "bench-device-0262",
+      "sprite": "bench0262"
+    },
+    {
+      "device_id": "bench-device-0263",
+      "sprite": "bench0263"
+    },
+    {
+      "device_id": "bench-device-0264",
+      "sprite": "bench0264"
+    },
+    {
+      "device_id": "bench-device-0265",
+      "sprite": "bench0265"
+    },
+    {
+      "device_id": "bench-device-0266",
+      "sprite": "bench0266"
+    },
+    {
+      "device_id": "bench-device-0267",
+      "sprite": "bench0267"
+    },
+    {
+      "device_id": "bench-device-0268",
+      "sprite": "bench0268"
+    },
+    {
+      "device_id": "bench-device-0269",
+      "sprite": "bench0269"
+    },
+    {
+      "device_id": "bench-device-0270",
+      "sprite": "bench0270"
+    },
+    {
+      "device_id": "bench-device-0271",
+      "sprite": "bench0271"
+    },
+    {
+      "device_id": "bench-device-0272",
+      "sprite": "bench0272"
+    },
+    {
+      "device_id": "bench-device-0273",
+      "sprite": "bench0273"
+    },
+    {
+      "device_id": "bench-device-0274",
+      "sprite": "bench0274"
+    },
+    {
+      "device_id": "bench-device-0275",
+      "sprite": "bench0275"
+    },
+    {
+      "device_id": "bench-device-0276",
+      "sprite": "bench0276"
+    },
+    {
+      "device_id": "bench-device-0277",
+      "sprite": "bench0277"
+    },
+    {
+      "device_id": "bench-device-0278",
+      "sprite": "bench0278"
+    },
+    {
+      "device_id": "bench-device-0279",
+      "sprite": "bench0279"
+    },
+    {
+      "device_id": "bench-device-0280",
+      "sprite": "bench0280"
+    },
+    {
+      "device_id": "bench-device-0281",
+      "sprite": "bench0281"
+    },
+    {
+      "device_id": "bench-device-0282",
+      "sprite": "bench0282"
+    },
+    {
+      "device_id": "bench-device-0283",
+      "sprite": "bench0283"
+    },
+    {
+      "device_id": "bench-device-0284",
+      "sprite": "bench0284"
+    },
+    {
+      "device_id": "bench-device-0285",
+      "sprite": "bench0285"
+    },
+    {
+      "device_id": "bench-device-0286",
+      "sprite": "bench0286"
+    },
+    {
+      "device_id": "bench-device-0287",
+      "sprite": "bench0287"
+    },
+    {
+      "device_id": "bench-device-0288",
+      "sprite": "bench0288"
+    },
+    {
+      "device_id": "bench-device-0289",
+      "sprite": "bench0289"
+    },
+    {
+      "device_id": "bench-device-0290",
+      "sprite": "bench0290"
+    },
+    {
+      "device_id": "bench-device-0291",
+      "sprite": "bench0291"
+    },
+    {
+      "device_id": "bench-device-0292",
+      "sprite": "bench0292"
+    },
+    {
+      "device_id": "bench-device-0293",
+      "sprite": "bench0293"
+    },
+    {
+      "device_id": "bench-device-0294",
+      "sprite": "bench0294"
+    },
+    {
+      "device_id": "bench-device-0295",
+      "sprite": "bench0295"
+    },
+    {
+      "device_id": "bench-device-0296",
+      "sprite": "bench0296"
+    },
+    {
+      "device_id": "bench-device-0297",
+      "sprite": "bench0297"
+    },
+    {
+      "device_id": "bench-device-0298",
+      "sprite": "bench0298"
+    },
+    {
+      "device_id": "bench-device-0299",
+      "sprite": "bench0299"
+    },
+    {
+      "device_id": "bench-device-0300",
+      "sprite": "bench0300"
+    },
+    {
+      "device_id": "bench-device-0301",
+      "sprite": "bench0301"
+    },
+    {
+      "device_id": "bench-device-0302",
+      "sprite": "bench0302"
+    },
+    {
+      "device_id": "bench-device-0303",
+      "sprite": "bench0303"
+    },
+    {
+      "device_id": "bench-device-0304",
+      "sprite": "bench0304"
+    },
+    {
+      "device_id": "bench-device-0305",
+      "sprite": "bench0305"
+    },
+    {
+      "device_id": "bench-device-0306",
+      "sprite": "bench0306"
+    },
+    {
+      "device_id": "bench-device-0307",
+      "sprite": "bench0307"
+    },
+    {
+      "device_id": "bench-device-0308",
+      "sprite": "bench0308"
+    },
+    {
+      "device_id": "bench-device-0309",
+      "sprite": "bench0309"
+    },
+    {
+      "device_id": "bench-device-0310",
+      "sprite": "bench0310"
+    },
+    {
+      "device_id": "bench-device-0311",
+      "sprite": "bench0311"
+    },
+    {
+      "device_id": "bench-device-0312",
+      "sprite": "bench0312"
+    },
+    {
+      "device_id": "bench-device-0313",
+      "sprite": "bench0313"
+    },
+    {
+      "device_id": "bench-device-0314",
+      "sprite": "bench0314"
+    },
+    {
+      "device_id": "bench-device-0315",
+      "sprite": "bench0315"
+    },
+    {
+      "device_id": "bench-device-0316",
+      "sprite": "bench0316"
+    },
+    {
+      "device_id": "bench-device-0317",
+      "sprite": "bench0317"
+    },
+    {
+      "device_id": "bench-device-0318",
+      "sprite": "bench0318"
+    },
+    {
+      "device_id": "bench-device-0319",
+      "sprite": "bench0319"
+    },
+    {
+      "device_id": "bench-device-0320",
+      "sprite": "bench0320"
+    },
+    {
+      "device_id": "bench-device-0321",
+      "sprite": "bench0321"
+    },
+    {
+      "device_id": "bench-device-0322",
+      "sprite": "bench0322"
+    },
+    {
+      "device_id": "bench-device-0323",
+      "sprite": "bench0323"
+    },
+    {
+      "device_id": "bench-device-0324",
+      "sprite": "bench0324"
+    },
+    {
+      "device_id": "bench-device-0325",
+      "sprite": "bench0325"
+    },
+    {
+      "device_id": "bench-device-0326",
+      "sprite": "bench0326"
+    },
+    {
+      "device_id": "bench-device-0327",
+      "sprite": "bench0327"
+    },
+    {
+      "device_id": "bench-device-0328",
+      "sprite": "bench0328"
+    },
+    {
+      "device_id": "bench-device-0329",
+      "sprite": "bench0329"
+    },
+    {
+      "device_id": "bench-device-0330",
+      "sprite": "bench0330"
+    },
+    {
+      "device_id": "bench-device-0331",
+      "sprite": "bench0331"
+    },
+    {
+      "device_id": "bench-device-0332",
+      "sprite": "bench0332"
+    },
+    {
+      "device_id": "bench-device-0333",
+      "sprite": "bench0333"
+    },
+    {
+      "device_id": "bench-device-0334",
+      "sprite": "bench0334"
+    },
+    {
+      "device_id": "bench-device-0335",
+      "sprite": "bench0335"
+    },
+    {
+      "device_id": "bench-device-0336",
+      "sprite": "bench0336"
+    },
+    {
+      "device_id": "bench-device-0337",
+      "sprite": "bench0337"
+    },
+    {
+      "device_id": "bench-device-0338",
+      "sprite": "bench0338"
+    },
+    {
+      "device_id": "bench-device-0339",
+      "sprite": "bench0339"
+    },
+    {
+      "device_id": "bench-device-0340",
+      "sprite": "bench0340"
+    },
+    {
+      "device_id": "bench-device-0341",
+      "sprite": "bench0341"
+    },
+    {
+      "device_id": "bench-device-0342",
+      "sprite": "bench0342"
+    },
+    {
+      "device_id": "bench-device-0343",
+      "sprite": "bench0343"
+    },
+    {
+      "device_id": "bench-device-0344",
+      "sprite": "bench0344"
+    },
+    {
+      "device_id": "bench-device-0345",
+      "sprite": "bench0345"
+    },
+    {
+      "device_id": "bench-device-0346",
+      "sprite": "bench0346"
+    },
+    {
+      "device_id": "bench-device-0347",
+      "sprite": "bench0347"
+    },
+    {
+      "device_id": "bench-device-0348",
+      "sprite": "bench0348"
+    },
+    {
+      "device_id": "bench-device-0349",
+      "sprite": "bench0349"
+    },
+    {
+      "device_id": "bench-device-0350",
+      "sprite": "bench0350"
+    },
+    {
+      "device_id": "bench-device-0351",
+      "sprite": "bench0351"
+    },
+    {
+      "device_id": "bench-device-0352",
+      "sprite": "bench0352"
+    },
+    {
+      "device_id": "bench-device-0353",
+      "sprite": "bench0353"
+    },
+    {
+      "device_id": "bench-device-0354",
+      "sprite": "bench0354"
+    },
+    {
+      "device_id": "bench-device-0355",
+      "sprite": "bench0355"
+    },
+    {
+      "device_id": "bench-device-0356",
+      "sprite": "bench0356"
+    },
+    {
+      "device_id": "bench-device-0357",
+      "sprite": "bench0357"
+    },
+    {
+      "device_id": "bench-device-0358",
+      "sprite": "bench0358"
+    },
+    {
+      "device_id": "bench-device-0359",
+      "sprite": "bench0359"
+    },
+    {
+      "device_id": "bench-device-0360",
+      "sprite": "bench0360"
+    },
+    {
+      "device_id": "bench-device-0361",
+      "sprite": "bench0361"
+    },
+    {
+      "device_id": "bench-device-0362",
+      "sprite": "bench0362"
+    },
+    {
+      "device_id": "bench-device-0363",
+      "sprite": "bench0363"
+    },
+    {
+      "device_id": "bench-device-0364",
+      "sprite": "bench0364"
+    },
+    {
+      "device_id": "bench-device-0365",
+      "sprite": "bench0365"
+    },
+    {
+      "device_id": "bench-device-0366",
+      "sprite": "bench0366"
+    },
+    {
+      "device_id": "bench-device-0367",
+      "sprite": "bench0367"
+    },
+    {
+      "device_id": "bench-device-0368",
+      "sprite": "bench0368"
+    },
+    {
+      "device_id": "bench-device-0369",
+      "sprite": "bench0369"
+    },
+    {
+      "device_id": "bench-device-0370",
+      "sprite": "bench0370"
+    },
+    {
+      "device_id": "bench-device-0371",
+      "sprite": "bench0371"
+    },
+    {
+      "device_id": "bench-device-0372",
+      "sprite": "bench0372"
+    },
+    {
+      "device_id": "bench-device-0373",
+      "sprite": "bench0373"
+    },
+    {
+      "device_id": "bench-device-0374",
+      "sprite": "bench0374"
+    },
+    {
+      "device_id": "bench-device-0375",
+      "sprite": "bench0375"
+    },
+    {
+      "device_id": "bench-device-0376",
+      "sprite": "bench0376"
+    },
+    {
+      "device_id": "bench-device-0377",
+      "sprite": "bench0377"
+    },
+    {
+      "device_id": "bench-device-0378",
+      "sprite": "bench0378"
+    },
+    {
+      "device_id": "bench-device-0379",
+      "sprite": "bench0379"
+    },
+    {
+      "device_id": "bench-device-0380",
+      "sprite": "bench0380"
+    },
+    {
+      "device_id": "bench-device-0381",
+      "sprite": "bench0381"
+    },
+    {
+      "device_id": "bench-device-0382",
+      "sprite": "bench0382"
+    },
+    {
+      "device_id": "bench-device-0383",
+      "sprite": "bench0383"
+    },
+    {
+      "device_id": "bench-device-0384",
+      "sprite": "bench0384"
+    },
+    {
+      "device_id": "bench-device-0385",
+      "sprite": "bench0385"
+    },
+    {
+      "device_id": "bench-device-0386",
+      "sprite": "bench0386"
+    },
+    {
+      "device_id": "bench-device-0387",
+      "sprite": "bench0387"
+    },
+    {
+      "device_id": "bench-device-0388",
+      "sprite": "bench0388"
+    },
+    {
+      "device_id": "bench-device-0389",
+      "sprite": "bench0389"
+    },
+    {
+      "device_id": "bench-device-0390",
+      "sprite": "bench0390"
+    },
+    {
+      "device_id": "bench-device-0391",
+      "sprite": "bench0391"
+    },
+    {
+      "device_id": "bench-device-0392",
+      "sprite": "bench0392"
+    },
+    {
+      "device_id": "bench-device-0393",
+      "sprite": "bench0393"
+    },
+    {
+      "device_id": "bench-device-0394",
+      "sprite": "bench0394"
+    },
+    {
+      "device_id": "bench-device-0395",
+      "sprite": "bench0395"
+    },
+    {
+      "device_id": "bench-device-0396",
+      "sprite": "bench0396"
+    },
+    {
+      "device_id": "bench-device-0397",
+      "sprite": "bench0397"
+    },
+    {
+      "device_id": "bench-device-0398",
+      "sprite": "bench0398"
+    },
+    {
+      "device_id": "bench-device-0399",
+      "sprite": "bench0399"
+    },
+    {
+      "device_id": "bench-device-0400",
+      "sprite": "bench0400"
+    },
+    {
+      "device_id": "bench-device-0401",
+      "sprite": "bench0401"
+    },
+    {
+      "device_id": "bench-device-0402",
+      "sprite": "bench0402"
+    },
+    {
+      "device_id": "bench-device-0403",
+      "sprite": "bench0403"
+    },
+    {
+      "device_id": "bench-device-0404",
+      "sprite": "bench0404"
+    },
+    {
+      "device_id": "bench-device-0405",
+      "sprite": "bench0405"
+    },
+    {
+      "device_id": "bench-device-0406",
+      "sprite": "bench0406"
+    },
+    {
+      "device_id": "bench-device-0407",
+      "sprite": "bench0407"
+    },
+    {
+      "device_id": "bench-device-0408",
+      "sprite": "bench0408"
+    },
+    {
+      "device_id": "bench-device-0409",
+      "sprite": "bench0409"
+    },
+    {
+      "device_id": "bench-device-0410",
+      "sprite": "bench0410"
+    },
+    {
+      "device_id": "bench-device-0411",
+      "sprite": "bench0411"
+    },
+    {
+      "device_id": "bench-device-0412",
+      "sprite": "bench0412"
+    },
+    {
+      "device_id": "bench-device-0413",
+      "sprite": "bench0413"
+    },
+    {
+      "device_id": "bench-device-0414",
+      "sprite": "bench0414"
+    },
+    {
+      "device_id": "bench-device-0415",
+      "sprite": "bench0415"
+    },
+    {
+      "device_id": "bench-device-0416",
+      "sprite": "bench0416"
+    },
+    {
+      "device_id": "bench-device-0417",
+      "sprite": "bench0417"
+    },
+    {
+      "device_id": "bench-device-0418",
+      "sprite": "bench0418"
+    },
+    {
+      "device_id": "bench-device-0419",
+      "sprite": "bench0419"
+    },
+    {
+      "device_id": "bench-device-0420",
+      "sprite": "bench0420"
+    },
+    {
+      "device_id": "bench-device-0421",
+      "sprite": "bench0421"
+    },
+    {
+      "device_id": "bench-device-0422",
+      "sprite": "bench0422"
+    },
+    {
+      "device_id": "bench-device-0423",
+      "sprite": "bench0423"
+    },
+    {
+      "device_id": "bench-device-0424",
+      "sprite": "bench0424"
+    },
+    {
+      "device_id": "bench-device-0425",
+      "sprite": "bench0425"
+    },
+    {
+      "device_id": "bench-device-0426",
+      "sprite": "bench0426"
+    },
+    {
+      "device_id": "bench-device-0427",
+      "sprite": "bench0427"
+    },
+    {
+      "device_id": "bench-device-0428",
+      "sprite": "bench0428"
+    },
+    {
+      "device_id": "bench-device-0429",
+      "sprite": "bench0429"
+    },
+    {
+      "device_id": "bench-device-0430",
+      "sprite": "bench0430"
+    },
+    {
+      "device_id": "bench-device-0431",
+      "sprite": "bench0431"
+    },
+    {
+      "device_id": "bench-device-0432",
+      "sprite": "bench0432"
+    },
+    {
+      "device_id": "bench-device-0433",
+      "sprite": "bench0433"
+    },
+    {
+      "device_id": "bench-device-0434",
+      "sprite": "bench0434"
+    },
+    {
+      "device_id": "bench-device-0435",
+      "sprite": "bench0435"
+    },
+    {
+      "device_id": "bench-device-0436",
+      "sprite": "bench0436"
+    },
+    {
+      "device_id": "bench-device-0437",
+      "sprite": "bench0437"
+    },
+    {
+      "device_id": "bench-device-0438",
+      "sprite": "bench0438"
+    },
+    {
+      "device_id": "bench-device-0439",
+      "sprite": "bench0439"
+    },
+    {
+      "device_id": "bench-device-0440",
+      "sprite": "bench0440"
+    },
+    {
+      "device_id": "bench-device-0441",
+      "sprite": "bench0441"
+    },
+    {
+      "device_id": "bench-device-0442",
+      "sprite": "bench0442"
+    },
+    {
+      "device_id": "bench-device-0443",
+      "sprite": "bench0443"
+    },
+    {
+      "device_id": "bench-device-0444",
+      "sprite": "bench0444"
+    },
+    {
+      "device_id": "bench-device-0445",
+      "sprite": "bench0445"
+    },
+    {
+      "device_id": "bench-device-0446",
+      "sprite": "bench0446"
+    },
+    {
+      "device_id": "bench-device-0447",
+      "sprite": "bench0447"
+    },
+    {
+      "device_id": "bench-device-0448",
+      "sprite": "bench0448"
+    },
+    {
+      "device_id": "bench-device-0449",
+      "sprite": "bench0449"
+    },
+    {
+      "device_id": "bench-device-0450",
+      "sprite": "bench0450"
+    },
+    {
+      "device_id": "bench-device-0451",
+      "sprite": "bench0451"
+    },
+    {
+      "device_id": "bench-device-0452",
+      "sprite": "bench0452"
+    },
+    {
+      "device_id": "bench-device-0453",
+      "sprite": "bench0453"
+    },
+    {
+      "device_id": "bench-device-0454",
+      "sprite": "bench0454"
+    },
+    {
+      "device_id": "bench-device-0455",
+      "sprite": "bench0455"
+    },
+    {
+      "device_id": "bench-device-0456",
+      "sprite": "bench0456"
+    },
+    {
+      "device_id": "bench-device-0457",
+      "sprite": "bench0457"
+    },
+    {
+      "device_id": "bench-device-0458",
+      "sprite": "bench0458"
+    },
+    {
+      "device_id": "bench-device-0459",
+      "sprite": "bench0459"
+    },
+    {
+      "device_id": "bench-device-0460",
+      "sprite": "bench0460"
+    },
+    {
+      "device_id": "bench-device-0461",
+      "sprite": "bench0461"
+    },
+    {
+      "device_id": "bench-device-0462",
+      "sprite": "bench0462"
+    },
+    {
+      "device_id": "bench-device-0463",
+      "sprite": "bench0463"
+    },
+    {
+      "device_id": "bench-device-0464",
+      "sprite": "bench0464"
+    },
+    {
+      "device_id": "bench-device-0465",
+      "sprite": "bench0465"
+    },
+    {
+      "device_id": "bench-device-0466",
+      "sprite": "bench0466"
+    },
+    {
+      "device_id": "bench-device-0467",
+      "sprite": "bench0467"
+    },
+    {
+      "device_id": "bench-device-0468",
+      "sprite": "bench0468"
+    },
+    {
+      "device_id": "bench-device-0469",
+      "sprite": "bench0469"
+    },
+    {
+      "device_id": "bench-device-0470",
+      "sprite": "bench0470"
+    },
+    {
+      "device_id": "bench-device-0471",
+      "sprite": "bench0471"
+    },
+    {
+      "device_id": "bench-device-0472",
+      "sprite": "bench0472"
+    },
+    {
+      "device_id": "bench-device-0473",
+      "sprite": "bench0473"
+    },
+    {
+      "device_id": "bench-device-0474",
+      "sprite": "bench0474"
+    },
+    {
+      "device_id": "bench-device-0475",
+      "sprite": "bench0475"
+    },
+    {
+      "device_id": "bench-device-0476",
+      "sprite": "bench0476"
+    },
+    {
+      "device_id": "bench-device-0477",
+      "sprite": "bench0477"
+    },
+    {
+      "device_id": "bench-device-0478",
+      "sprite": "bench0478"
+    },
+    {
+      "device_id": "bench-device-0479",
+      "sprite": "bench0479"
+    },
+    {
+      "device_id": "bench-device-0480",
+      "sprite": "bench0480"
+    },
+    {
+      "device_id": "bench-device-0481",
+      "sprite": "bench0481"
+    },
+    {
+      "device_id": "bench-device-0482",
+      "sprite": "bench0482"
+    },
+    {
+      "device_id": "bench-device-0483",
+      "sprite": "bench0483"
+    },
+    {
+      "device_id": "bench-device-0484",
+      "sprite": "bench0484"
+    },
+    {
+      "device_id": "bench-device-0485",
+      "sprite": "bench0485"
+    },
+    {
+      "device_id": "bench-device-0486",
+      "sprite": "bench0486"
+    },
+    {
+      "device_id": "bench-device-0487",
+      "sprite": "bench0487"
+    },
+    {
+      "device_id": "bench-device-0488",
+      "sprite": "bench0488"
+    },
+    {
+      "device_id": "bench-device-0489",
+      "sprite": "bench0489"
+    },
+    {
+      "device_id": "bench-device-0490",
+      "sprite": "bench0490"
+    },
+    {
+      "device_id": "bench-device-0491",
+      "sprite": "bench0491"
+    },
+    {
+      "device_id": "bench-device-0492",
+      "sprite": "bench0492"
+    },
+    {
+      "device_id": "bench-device-0493",
+      "sprite": "bench0493"
+    },
+    {
+      "device_id": "bench-device-0494",
+      "sprite": "bench0494"
+    },
+    {
+      "device_id": "bench-device-0495",
+      "sprite": "bench0495"
+    },
+    {
+      "device_id": "bench-device-0496",
+      "sprite": "bench0496"
+    },
+    {
+      "device_id": "bench-device-0497",
+      "sprite": "bench0497"
+    },
+    {
+      "device_id": "bench-device-0498",
+      "sprite": "bench0498"
+    },
+    {
+      "device_id": "bench-device-0499",
+      "sprite": "bench0499"
+    },
+    {
+      "device_id": "bench-device-0500",
+      "sprite": "bench0500"
+    },
+    {
+      "device_id": "bench-device-0501",
+      "sprite": "bench0501"
+    },
+    {
+      "device_id": "bench-device-0502",
+      "sprite": "bench0502"
+    },
+    {
+      "device_id": "bench-device-0503",
+      "sprite": "bench0503"
+    },
+    {
+      "device_id": "bench-device-0504",
+      "sprite": "bench0504"
+    },
+    {
+      "device_id": "bench-device-0505",
+      "sprite": "bench0505"
+    },
+    {
+      "device_id": "bench-device-0506",
+      "sprite": "bench0506"
+    },
+    {
+      "device_id": "bench-device-0507",
+      "sprite": "bench0507"
+    },
+    {
+      "device_id": "bench-device-0508",
+      "sprite": "bench0508"
+    },
+    {
+      "device_id": "bench-device-0509",
+      "sprite": "bench0509"
+    },
+    {
+      "device_id": "bench-device-0510",
+      "sprite": "bench0510"
+    },
+    {
+      "device_id": "bench-device-0511",
+      "sprite": "bench0511"
+    },
+    {
+      "device_id": "bench-device-0512",
+      "sprite": "bench0512"
+    },
+    {
+      "device_id": "bench-device-0513",
+      "sprite": "bench0513"
+    },
+    {
+      "device_id": "bench-device-0514",
+      "sprite": "bench0514"
+    },
+    {
+      "device_id": "bench-device-0515",
+      "sprite": "bench0515"
+    },
+    {
+      "device_id": "bench-device-0516",
+      "sprite": "bench0516"
+    },
+    {
+      "device_id": "bench-device-0517",
+      "sprite": "bench0517"
+    },
+    {
+      "device_id": "bench-device-0518",
+      "sprite": "bench0518"
+    },
+    {
+      "device_id": "bench-device-0519",
+      "sprite": "bench0519"
+    },
+    {
+      "device_id": "bench-device-0520",
+      "sprite": "bench0520"
+    },
+    {
+      "device_id": "bench-device-0521",
+      "sprite": "bench0521"
+    },
+    {
+      "device_id": "bench-device-0522",
+      "sprite": "bench0522"
+    },
+    {
+      "device_id": "bench-device-0523",
+      "sprite": "bench0523"
+    },
+    {
+      "device_id": "bench-device-0524",
+      "sprite": "bench0524"
+    },
+    {
+      "device_id": "bench-device-0525",
+      "sprite": "bench0525"
+    },
+    {
+      "device_id": "bench-device-0526",
+      "sprite": "bench0526"
+    },
+    {
+      "device_id": "bench-device-0527",
+      "sprite": "bench0527"
+    },
+    {
+      "device_id": "bench-device-0528",
+      "sprite": "bench0528"
+    },
+    {
+      "device_id": "bench-device-0529",
+      "sprite": "bench0529"
+    },
+    {
+      "device_id": "bench-device-0530",
+      "sprite": "bench0530"
+    },
+    {
+      "device_id": "bench-device-0531",
+      "sprite": "bench0531"
+    },
+    {
+      "device_id": "bench-device-0532",
+      "sprite": "bench0532"
+    },
+    {
+      "device_id": "bench-device-0533",
+      "sprite": "bench0533"
+    },
+    {
+      "device_id": "bench-device-0534",
+      "sprite": "bench0534"
+    },
+    {
+      "device_id": "bench-device-0535",
+      "sprite": "bench0535"
+    },
+    {
+      "device_id": "bench-device-0536",
+      "sprite": "bench0536"
+    },
+    {
+      "device_id": "bench-device-0537",
+      "sprite": "bench0537"
+    },
+    {
+      "device_id": "bench-device-0538",
+      "sprite": "bench0538"
+    },
+    {
+      "device_id": "bench-device-0539",
+      "sprite": "bench0539"
+    },
+    {
+      "device_id": "bench-device-0540",
+      "sprite": "bench0540"
+    },
+    {
+      "device_id": "bench-device-0541",
+      "sprite": "bench0541"
+    },
+    {
+      "device_id": "bench-device-0542",
+      "sprite": "bench0542"
+    },
+    {
+      "device_id": "bench-device-0543",
+      "sprite": "bench0543"
+    },
+    {
+      "device_id": "bench-device-0544",
+      "sprite": "bench0544"
+    },
+    {
+      "device_id": "bench-device-0545",
+      "sprite": "bench0545"
+    },
+    {
+      "device_id": "bench-device-0546",
+      "sprite": "bench0546"
+    },
+    {
+      "device_id": "bench-device-0547",
+      "sprite": "bench0547"
+    },
+    {
+      "device_id": "bench-device-0548",
+      "sprite": "bench0548"
+    },
+    {
+      "device_id": "bench-device-0549",
+      "sprite": "bench0549"
+    },
+    {
+      "device_id": "bench-device-0550",
+      "sprite": "bench0550"
+    },
+    {
+      "device_id": "bench-device-0551",
+      "sprite": "bench0551"
+    },
+    {
+      "device_id": "bench-device-0552",
+      "sprite": "bench0552"
+    },
+    {
+      "device_id": "bench-device-0553",
+      "sprite": "bench0553"
+    },
+    {
+      "device_id": "bench-device-0554",
+      "sprite": "bench0554"
+    },
+    {
+      "device_id": "bench-device-0555",
+      "sprite": "bench0555"
+    },
+    {
+      "device_id": "bench-device-0556",
+      "sprite": "bench0556"
+    },
+    {
+      "device_id": "bench-device-0557",
+      "sprite": "bench0557"
+    },
+    {
+      "device_id": "bench-device-0558",
+      "sprite": "bench0558"
+    },
+    {
+      "device_id": "bench-device-0559",
+      "sprite": "bench0559"
+    },
+    {
+      "device_id": "bench-device-0560",
+      "sprite": "bench0560"
+    },
+    {
+      "device_id": "bench-device-0561",
+      "sprite": "bench0561"
+    },
+    {
+      "device_id": "bench-device-0562",
+      "sprite": "bench0562"
+    },
+    {
+      "device_id": "bench-device-0563",
+      "sprite": "bench0563"
+    },
+    {
+      "device_id": "bench-device-0564",
+      "sprite": "bench0564"
+    },
+    {
+      "device_id": "bench-device-0565",
+      "sprite": "bench0565"
+    },
+    {
+      "device_id": "bench-device-0566",
+      "sprite": "bench0566"
+    },
+    {
+      "device_id": "bench-device-0567",
+      "sprite": "bench0567"
+    },
+    {
+      "device_id": "bench-device-0568",
+      "sprite": "bench0568"
+    },
+    {
+      "device_id": "bench-device-0569",
+      "sprite": "bench0569"
+    },
+    {
+      "device_id": "bench-device-0570",
+      "sprite": "bench0570"
+    },
+    {
+      "device_id": "bench-device-0571",
+      "sprite": "bench0571"
+    },
+    {
+      "device_id": "bench-device-0572",
+      "sprite": "bench0572"
+    },
+    {
+      "device_id": "bench-device-0573",
+      "sprite": "bench0573"
+    },
+    {
+      "device_id": "bench-device-0574",
+      "sprite": "bench0574"
+    },
+    {
+      "device_id": "bench-device-0575",
+      "sprite": "bench0575"
+    },
+    {
+      "device_id": "bench-device-0576",
+      "sprite": "bench0576"
+    },
+    {
+      "device_id": "bench-device-0577",
+      "sprite": "bench0577"
+    },
+    {
+      "device_id": "bench-device-0578",
+      "sprite": "bench0578"
+    },
+    {
+      "device_id": "bench-device-0579",
+      "sprite": "bench0579"
+    },
+    {
+      "device_id": "bench-device-0580",
+      "sprite": "bench0580"
+    },
+    {
+      "device_id": "bench-device-0581",
+      "sprite": "bench0581"
+    },
+    {
+      "device_id": "bench-device-0582",
+      "sprite": "bench0582"
+    },
+    {
+      "device_id": "bench-device-0583",
+      "sprite": "bench0583"
+    },
+    {
+      "device_id": "bench-device-0584",
+      "sprite": "bench0584"
+    },
+    {
+      "device_id": "bench-device-0585",
+      "sprite": "bench0585"
+    },
+    {
+      "device_id": "bench-device-0586",
+      "sprite": "bench0586"
+    },
+    {
+      "device_id": "bench-device-0587",
+      "sprite": "bench0587"
+    },
+    {
+      "device_id": "bench-device-0588",
+      "sprite": "bench0588"
+    },
+    {
+      "device_id": "bench-device-0589",
+      "sprite": "bench0589"
+    },
+    {
+      "device_id": "bench-device-0590",
+      "sprite": "bench0590"
+    },
+    {
+      "device_id": "bench-device-0591",
+      "sprite": "bench0591"
+    },
+    {
+      "device_id": "bench-device-0592",
+      "sprite": "bench0592"
+    },
+    {
+      "device_id": "bench-device-0593",
+      "sprite": "bench0593"
+    },
+    {
+      "device_id": "bench-device-0594",
+      "sprite": "bench0594"
+    },
+    {
+      "device_id": "bench-device-0595",
+      "sprite": "bench0595"
+    },
+    {
+      "device_id": "bench-device-0596",
+      "sprite": "bench0596"
+    },
+    {
+      "device_id": "bench-device-0597",
+      "sprite": "bench0597"
+    },
+    {
+      "device_id": "bench-device-0598",
+      "sprite": "bench0598"
+    },
+    {
+      "device_id": "bench-device-0599",
+      "sprite": "bench0599"
+    },
+    {
+      "device_id": "bench-device-0600",
+      "sprite": "bench0600"
+    },
+    {
+      "device_id": "bench-device-0601",
+      "sprite": "bench0601"
+    },
+    {
+      "device_id": "bench-device-0602",
+      "sprite": "bench0602"
+    },
+    {
+      "device_id": "bench-device-0603",
+      "sprite": "bench0603"
+    },
+    {
+      "device_id": "bench-device-0604",
+      "sprite": "bench0604"
+    },
+    {
+      "device_id": "bench-device-0605",
+      "sprite": "bench0605"
+    },
+    {
+      "device_id": "bench-device-0606",
+      "sprite": "bench0606"
+    },
+    {
+      "device_id": "bench-device-0607",
+      "sprite": "bench0607"
+    },
+    {
+      "device_id": "bench-device-0608",
+      "sprite": "bench0608"
+    },
+    {
+      "device_id": "bench-device-0609",
+      "sprite": "bench0609"
+    },
+    {
+      "device_id": "bench-device-0610",
+      "sprite": "bench0610"
+    },
+    {
+      "device_id": "bench-device-0611",
+      "sprite": "bench0611"
+    },
+    {
+      "device_id": "bench-device-0612",
+      "sprite": "bench0612"
+    },
+    {
+      "device_id": "bench-device-0613",
+      "sprite": "bench0613"
+    },
+    {
+      "device_id": "bench-device-0614",
+      "sprite": "bench0614"
+    },
+    {
+      "device_id": "bench-device-0615",
+      "sprite": "bench0615"
+    },
+    {
+      "device_id": "bench-device-0616",
+      "sprite": "bench0616"
+    },
+    {
+      "device_id": "bench-device-0617",
+      "sprite": "bench0617"
+    },
+    {
+      "device_id": "bench-device-0618",
+      "sprite": "bench0618"
+    },
+    {
+      "device_id": "bench-device-0619",
+      "sprite": "bench0619"
+    },
+    {
+      "device_id": "bench-device-0620",
+      "sprite": "bench0620"
+    },
+    {
+      "device_id": "bench-device-0621",
+      "sprite": "bench0621"
+    },
+    {
+      "device_id": "bench-device-0622",
+      "sprite": "bench0622"
+    },
+    {
+      "device_id": "bench-device-0623",
+      "sprite": "bench0623"
+    },
+    {
+      "device_id": "bench-device-0624",
+      "sprite": "bench0624"
+    },
+    {
+      "device_id": "bench-device-0625",
+      "sprite": "bench0625"
+    },
+    {
+      "device_id": "bench-device-0626",
+      "sprite": "bench0626"
+    },
+    {
+      "device_id": "bench-device-0627",
+      "sprite": "bench0627"
+    },
+    {
+      "device_id": "bench-device-0628",
+      "sprite": "bench0628"
+    },
+    {
+      "device_id": "bench-device-0629",
+      "sprite": "bench0629"
+    },
+    {
+      "device_id": "bench-device-0630",
+      "sprite": "bench0630"
+    },
+    {
+      "device_id": "bench-device-0631",
+      "sprite": "bench0631"
+    },
+    {
+      "device_id": "bench-device-0632",
+      "sprite": "bench0632"
+    },
+    {
+      "device_id": "bench-device-0633",
+      "sprite": "bench0633"
+    },
+    {
+      "device_id": "bench-device-0634",
+      "sprite": "bench0634"
+    },
+    {
+      "device_id": "bench-device-0635",
+      "sprite": "bench0635"
+    },
+    {
+      "device_id": "bench-device-0636",
+      "sprite": "bench0636"
+    },
+    {
+      "device_id": "bench-device-0637",
+      "sprite": "bench0637"
+    },
+    {
+      "device_id": "bench-device-0638",
+      "sprite": "bench0638"
+    },
+    {
+      "device_id": "bench-device-0639",
+      "sprite": "bench0639"
+    },
+    {
+      "device_id": "bench-device-0640",
+      "sprite": "bench0640"
+    },
+    {
+      "device_id": "bench-device-0641",
+      "sprite": "bench0641"
+    },
+    {
+      "device_id": "bench-device-0642",
+      "sprite": "bench0642"
+    },
+    {
+      "device_id": "bench-device-0643",
+      "sprite": "bench0643"
+    },
+    {
+      "device_id": "bench-device-0644",
+      "sprite": "bench0644"
+    },
+    {
+      "device_id": "bench-device-0645",
+      "sprite": "bench0645"
+    },
+    {
+      "device_id": "bench-device-0646",
+      "sprite": "bench0646"
+    },
+    {
+      "device_id": "bench-device-0647",
+      "sprite": "bench0647"
+    },
+    {
+      "device_id": "bench-device-0648",
+      "sprite": "bench0648"
+    },
+    {
+      "device_id": "bench-device-0649",
+      "sprite": "bench0649"
+    },
+    {
+      "device_id": "bench-device-0650",
+      "sprite": "bench0650"
+    },
+    {
+      "device_id": "bench-device-0651",
+      "sprite": "bench0651"
+    },
+    {
+      "device_id": "bench-device-0652",
+      "sprite": "bench0652"
+    },
+    {
+      "device_id": "bench-device-0653",
+      "sprite": "bench0653"
+    },
+    {
+      "device_id": "bench-device-0654",
+      "sprite": "bench0654"
+    },
+    {
+      "device_id": "bench-device-0655",
+      "sprite": "bench0655"
+    },
+    {
+      "device_id": "bench-device-0656",
+      "sprite": "bench0656"
+    },
+    {
+      "device_id": "bench-device-0657",
+      "sprite": "bench0657"
+    },
+    {
+      "device_id": "bench-device-0658",
+      "sprite": "bench0658"
+    },
+    {
+      "device_id": "bench-device-0659",
+      "sprite": "bench0659"
+    },
+    {
+      "device_id": "bench-device-0660",
+      "sprite": "bench0660"
+    },
+    {
+      "device_id": "bench-device-0661",
+      "sprite": "bench0661"
+    },
+    {
+      "device_id": "bench-device-0662",
+      "sprite": "bench0662"
+    },
+    {
+      "device_id": "bench-device-0663",
+      "sprite": "bench0663"
+    },
+    {
+      "device_id": "bench-device-0664",
+      "sprite": "bench0664"
+    },
+    {
+      "device_id": "bench-device-0665",
+      "sprite": "bench0665"
+    },
+    {
+      "device_id": "bench-device-0666",
+      "sprite": "bench0666"
+    },
+    {
+      "device_id": "bench-device-0667",
+      "sprite": "bench0667"
+    },
+    {
+      "device_id": "bench-device-0668",
+      "sprite": "bench0668"
+    },
+    {
+      "device_id": "bench-device-0669",
+      "sprite": "bench0669"
+    },
+    {
+      "device_id": "bench-device-0670",
+      "sprite": "bench0670"
+    },
+    {
+      "device_id": "bench-device-0671",
+      "sprite": "bench0671"
+    },
+    {
+      "device_id": "bench-device-0672",
+      "sprite": "bench0672"
+    },
+    {
+      "device_id": "bench-device-0673",
+      "sprite": "bench0673"
+    },
+    {
+      "device_id": "bench-device-0674",
+      "sprite": "bench0674"
+    },
+    {
+      "device_id": "bench-device-0675",
+      "sprite": "bench0675"
+    },
+    {
+      "device_id": "bench-device-0676",
+      "sprite": "bench0676"
+    },
+    {
+      "device_id": "bench-device-0677",
+      "sprite": "bench0677"
+    },
+    {
+      "device_id": "bench-device-0678",
+      "sprite": "bench0678"
+    },
+    {
+      "device_id": "bench-device-0679",
+      "sprite": "bench0679"
+    },
+    {
+      "device_id": "bench-device-0680",
+      "sprite": "bench0680"
+    },
+    {
+      "device_id": "bench-device-0681",
+      "sprite": "bench0681"
+    },
+    {
+      "device_id": "bench-device-0682",
+      "sprite": "bench0682"
+    },
+    {
+      "device_id": "bench-device-0683",
+      "sprite": "bench0683"
+    },
+    {
+      "device_id": "bench-device-0684",
+      "sprite": "bench0684"
+    },
+    {
+      "device_id": "bench-device-0685",
+      "sprite": "bench0685"
+    },
+    {
+      "device_id": "bench-device-0686",
+      "sprite": "bench0686"
+    },
+    {
+      "device_id": "bench-device-0687",
+      "sprite": "bench0687"
+    },
+    {
+      "device_id": "bench-device-0688",
+      "sprite": "bench0688"
+    },
+    {
+      "device_id": "bench-device-0689",
+      "sprite": "bench0689"
+    },
+    {
+      "device_id": "bench-device-0690",
+      "sprite": "bench0690"
+    },
+    {
+      "device_id": "bench-device-0691",
+      "sprite": "bench0691"
+    },
+    {
+      "device_id": "bench-device-0692",
+      "sprite": "bench0692"
+    },
+    {
+      "device_id": "bench-device-0693",
+      "sprite": "bench0693"
+    },
+    {
+      "device_id": "bench-device-0694",
+      "sprite": "bench0694"
+    },
+    {
+      "device_id": "bench-device-0695",
+      "sprite": "bench0695"
+    },
+    {
+      "device_id": "bench-device-0696",
+      "sprite": "bench0696"
+    },
+    {
+      "device_id": "bench-device-0697",
+      "sprite": "bench0697"
+    },
+    {
+      "device_id": "bench-device-0698",
+      "sprite": "bench0698"
+    },
+    {
+      "device_id": "bench-device-0699",
+      "sprite": "bench0699"
+    },
+    {
+      "device_id": "bench-device-0700",
+      "sprite": "bench0700"
+    },
+    {
+      "device_id": "bench-device-0701",
+      "sprite": "bench0701"
+    },
+    {
+      "device_id": "bench-device-0702",
+      "sprite": "bench0702"
+    },
+    {
+      "device_id": "bench-device-0703",
+      "sprite": "bench0703"
+    },
+    {
+      "device_id": "bench-device-0704",
+      "sprite": "bench0704"
+    },
+    {
+      "device_id": "bench-device-0705",
+      "sprite": "bench0705"
+    },
+    {
+      "device_id": "bench-device-0706",
+      "sprite": "bench0706"
+    },
+    {
+      "device_id": "bench-device-0707",
+      "sprite": "bench0707"
+    },
+    {
+      "device_id": "bench-device-0708",
+      "sprite": "bench0708"
+    },
+    {
+      "device_id": "bench-device-0709",
+      "sprite": "bench0709"
+    },
+    {
+      "device_id": "bench-device-0710",
+      "sprite": "bench0710"
+    },
+    {
+      "device_id": "bench-device-0711",
+      "sprite": "bench0711"
+    },
+    {
+      "device_id": "bench-device-0712",
+      "sprite": "bench0712"
+    },
+    {
+      "device_id": "bench-device-0713",
+      "sprite": "bench0713"
+    },
+    {
+      "device_id": "bench-device-0714",
+      "sprite": "bench0714"
+    },
+    {
+      "device_id": "bench-device-0715",
+      "sprite": "bench0715"
+    },
+    {
+      "device_id": "bench-device-0716",
+      "sprite": "bench0716"
+    },
+    {
+      "device_id": "bench-device-0717",
+      "sprite": "bench0717"
+    },
+    {
+      "device_id": "bench-device-0718",
+      "sprite": "bench0718"
+    },
+    {
+      "device_id": "bench-device-0719",
+      "sprite": "bench0719"
+    },
+    {
+      "device_id": "bench-device-0720",
+      "sprite": "bench0720"
+    },
+    {
+      "device_id": "bench-device-0721",
+      "sprite": "bench0721"
+    },
+    {
+      "device_id": "bench-device-0722",
+      "sprite": "bench0722"
+    },
+    {
+      "device_id": "bench-device-0723",
+      "sprite": "bench0723"
+    },
+    {
+      "device_id": "bench-device-0724",
+      "sprite": "bench0724"
+    },
+    {
+      "device_id": "bench-device-0725",
+      "sprite": "bench0725"
+    },
+    {
+      "device_id": "bench-device-0726",
+      "sprite": "bench0726"
+    },
+    {
+      "device_id": "bench-device-0727",
+      "sprite": "bench0727"
+    },
+    {
+      "device_id": "bench-device-0728",
+      "sprite": "bench0728"
+    },
+    {
+      "device_id": "bench-device-0729",
+      "sprite": "bench0729"
+    },
+    {
+      "device_id": "bench-device-0730",
+      "sprite": "bench0730"
+    },
+    {
+      "device_id": "bench-device-0731",
+      "sprite": "bench0731"
+    },
+    {
+      "device_id": "bench-device-0732",
+      "sprite": "bench0732"
+    },
+    {
+      "device_id": "bench-device-0733",
+      "sprite": "bench0733"
+    },
+    {
+      "device_id": "bench-device-0734",
+      "sprite": "bench0734"
+    },
+    {
+      "device_id": "bench-device-0735",
+      "sprite": "bench0735"
+    },
+    {
+      "device_id": "bench-device-0736",
+      "sprite": "bench0736"
+    },
+    {
+      "device_id": "bench-device-0737",
+      "sprite": "bench0737"
+    },
+    {
+      "device_id": "bench-device-0738",
+      "sprite": "bench0738"
+    },
+    {
+      "device_id": "bench-device-0739",
+      "sprite": "bench0739"
+    },
+    {
+      "device_id": "bench-device-0740",
+      "sprite": "bench0740"
+    },
+    {
+      "device_id": "bench-device-0741",
+      "sprite": "bench0741"
+    },
+    {
+      "device_id": "bench-device-0742",
+      "sprite": "bench0742"
+    },
+    {
+      "device_id": "bench-device-0743",
+      "sprite": "bench0743"
+    },
+    {
+      "device_id": "bench-device-0744",
+      "sprite": "bench0744"
+    },
+    {
+      "device_id": "bench-device-0745",
+      "sprite": "bench0745"
+    },
+    {
+      "device_id": "bench-device-0746",
+      "sprite": "bench0746"
+    },
+    {
+      "device_id": "bench-device-0747",
+      "sprite": "bench0747"
+    },
+    {
+      "device_id": "bench-device-0748",
+      "sprite": "bench0748"
+    },
+    {
+      "device_id": "bench-device-0749",
+      "sprite": "bench0749"
+    },
+    {
+      "device_id": "bench-device-0750",
+      "sprite": "bench0750"
+    },
+    {
+      "device_id": "bench-device-0751",
+      "sprite": "bench0751"
+    },
+    {
+      "device_id": "bench-device-0752",
+      "sprite": "bench0752"
+    },
+    {
+      "device_id": "bench-device-0753",
+      "sprite": "bench0753"
+    },
+    {
+      "device_id": "bench-device-0754",
+      "sprite": "bench0754"
+    },
+    {
+      "device_id": "bench-device-0755",
+      "sprite": "bench0755"
+    },
+    {
+      "device_id": "bench-device-0756",
+      "sprite": "bench0756"
+    },
+    {
+      "device_id": "bench-device-0757",
+      "sprite": "bench0757"
+    },
+    {
+      "device_id": "bench-device-0758",
+      "sprite": "bench0758"
+    },
+    {
+      "device_id": "bench-device-0759",
+      "sprite": "bench0759"
+    },
+    {
+      "device_id": "bench-device-0760",
+      "sprite": "bench0760"
+    },
+    {
+      "device_id": "bench-device-0761",
+      "sprite": "bench0761"
+    },
+    {
+      "device_id": "bench-device-0762",
+      "sprite": "bench0762"
+    },
+    {
+      "device_id": "bench-device-0763",
+      "sprite": "bench0763"
+    },
+    {
+      "device_id": "bench-device-0764",
+      "sprite": "bench0764"
+    },
+    {
+      "device_id": "bench-device-0765",
+      "sprite": "bench0765"
+    },
+    {
+      "device_id": "bench-device-0766",
+      "sprite": "bench0766"
+    },
+    {
+      "device_id": "bench-device-0767",
+      "sprite": "bench0767"
+    },
+    {
+      "device_id": "bench-device-0768",
+      "sprite": "bench0768"
+    },
+    {
+      "device_id": "bench-device-0769",
+      "sprite": "bench0769"
+    },
+    {
+      "device_id": "bench-device-0770",
+      "sprite": "bench0770"
+    },
+    {
+      "device_id": "bench-device-0771",
+      "sprite": "bench0771"
+    },
+    {
+      "device_id": "bench-device-0772",
+      "sprite": "bench0772"
+    },
+    {
+      "device_id": "bench-device-0773",
+      "sprite": "bench0773"
+    },
+    {
+      "device_id": "bench-device-0774",
+      "sprite": "bench0774"
+    },
+    {
+      "device_id": "bench-device-0775",
+      "sprite": "bench0775"
+    },
+    {
+      "device_id": "bench-device-0776",
+      "sprite": "bench0776"
+    },
+    {
+      "device_id": "bench-device-0777",
+      "sprite": "bench0777"
+    },
+    {
+      "device_id": "bench-device-0778",
+      "sprite": "bench0778"
+    },
+    {
+      "device_id": "bench-device-0779",
+      "sprite": "bench0779"
+    },
+    {
+      "device_id": "bench-device-0780",
+      "sprite": "bench0780"
+    },
+    {
+      "device_id": "bench-device-0781",
+      "sprite": "bench0781"
+    },
+    {
+      "device_id": "bench-device-0782",
+      "sprite": "bench0782"
+    },
+    {
+      "device_id": "bench-device-0783",
+      "sprite": "bench0783"
+    },
+    {
+      "device_id": "bench-device-0784",
+      "sprite": "bench0784"
+    },
+    {
+      "device_id": "bench-device-0785",
+      "sprite": "bench0785"
+    },
+    {
+      "device_id": "bench-device-0786",
+      "sprite": "bench0786"
+    },
+    {
+      "device_id": "bench-device-0787",
+      "sprite": "bench0787"
+    },
+    {
+      "device_id": "bench-device-0788",
+      "sprite": "bench0788"
+    },
+    {
+      "device_id": "bench-device-0789",
+      "sprite": "bench0789"
+    },
+    {
+      "device_id": "bench-device-0790",
+      "sprite": "bench0790"
+    },
+    {
+      "device_id": "bench-device-0791",
+      "sprite": "bench0791"
+    },
+    {
+      "device_id": "bench-device-0792",
+      "sprite": "bench0792"
+    },
+    {
+      "device_id": "bench-device-0793",
+      "sprite": "bench0793"
+    },
+    {
+      "device_id": "bench-device-0794",
+      "sprite": "bench0794"
+    },
+    {
+      "device_id": "bench-device-0795",
+      "sprite": "bench0795"
+    },
+    {
+      "device_id": "bench-device-0796",
+      "sprite": "bench0796"
+    },
+    {
+      "device_id": "bench-device-0797",
+      "sprite": "bench0797"
+    },
+    {
+      "device_id": "bench-device-0798",
+      "sprite": "bench0798"
+    },
+    {
+      "device_id": "bench-device-0799",
+      "sprite": "bench0799"
+    },
+    {
+      "device_id": "bench-device-0800",
+      "sprite": "bench0800"
+    },
+    {
+      "device_id": "bench-device-0801",
+      "sprite": "bench0801"
+    },
+    {
+      "device_id": "bench-device-0802",
+      "sprite": "bench0802"
+    },
+    {
+      "device_id": "bench-device-0803",
+      "sprite": "bench0803"
+    },
+    {
+      "device_id": "bench-device-0804",
+      "sprite": "bench0804"
+    },
+    {
+      "device_id": "bench-device-0805",
+      "sprite": "bench0805"
+    },
+    {
+      "device_id": "bench-device-0806",
+      "sprite": "bench0806"
+    },
+    {
+      "device_id": "bench-device-0807",
+      "sprite": "bench0807"
+    },
+    {
+      "device_id": "bench-device-0808",
+      "sprite": "bench0808"
+    },
+    {
+      "device_id": "bench-device-0809",
+      "sprite": "bench0809"
+    },
+    {
+      "device_id": "bench-device-0810",
+      "sprite": "bench0810"
+    },
+    {
+      "device_id": "bench-device-0811",
+      "sprite": "bench0811"
+    },
+    {
+      "device_id": "bench-device-0812",
+      "sprite": "bench0812"
+    },
+    {
+      "device_id": "bench-device-0813",
+      "sprite": "bench0813"
+    },
+    {
+      "device_id": "bench-device-0814",
+      "sprite": "bench0814"
+    },
+    {
+      "device_id": "bench-device-0815",
+      "sprite": "bench0815"
+    },
+    {
+      "device_id": "bench-device-0816",
+      "sprite": "bench0816"
+    },
+    {
+      "device_id": "bench-device-0817",
+      "sprite": "bench0817"
+    },
+    {
+      "device_id": "bench-device-0818",
+      "sprite": "bench0818"
+    },
+    {
+      "device_id": "bench-device-0819",
+      "sprite": "bench0819"
+    },
+    {
+      "device_id": "bench-device-0820",
+      "sprite": "bench0820"
+    },
+    {
+      "device_id": "bench-device-0821",
+      "sprite": "bench0821"
+    },
+    {
+      "device_id": "bench-device-0822",
+      "sprite": "bench0822"
+    },
+    {
+      "device_id": "bench-device-0823",
+      "sprite": "bench0823"
+    },
+    {
+      "device_id": "bench-device-0824",
+      "sprite": "bench0824"
+    },
+    {
+      "device_id": "bench-device-0825",
+      "sprite": "bench0825"
+    },
+    {
+      "device_id": "bench-device-0826",
+      "sprite": "bench0826"
+    },
+    {
+      "device_id": "bench-device-0827",
+      "sprite": "bench0827"
+    },
+    {
+      "device_id": "bench-device-0828",
+      "sprite": "bench0828"
+    },
+    {
+      "device_id": "bench-device-0829",
+      "sprite": "bench0829"
+    },
+    {
+      "device_id": "bench-device-0830",
+      "sprite": "bench0830"
+    },
+    {
+      "device_id": "bench-device-0831",
+      "sprite": "bench0831"
+    },
+    {
+      "device_id": "bench-device-0832",
+      "sprite": "bench0832"
+    },
+    {
+      "device_id": "bench-device-0833",
+      "sprite": "bench0833"
+    },
+    {
+      "device_id": "bench-device-0834",
+      "sprite": "bench0834"
+    },
+    {
+      "device_id": "bench-device-0835",
+      "sprite": "bench0835"
+    },
+    {
+      "device_id": "bench-device-0836",
+      "sprite": "bench0836"
+    },
+    {
+      "device_id": "bench-device-0837",
+      "sprite": "bench0837"
+    },
+    {
+      "device_id": "bench-device-0838",
+      "sprite": "bench0838"
+    },
+    {
+      "device_id": "bench-device-0839",
+      "sprite": "bench0839"
+    },
+    {
+      "device_id": "bench-device-0840",
+      "sprite": "bench0840"
+    },
+    {
+      "device_id": "bench-device-0841",
+      "sprite": "bench0841"
+    },
+    {
+      "device_id": "bench-device-0842",
+      "sprite": "bench0842"
+    },
+    {
+      "device_id": "bench-device-0843",
+      "sprite": "bench0843"
+    },
+    {
+      "device_id": "bench-device-0844",
+      "sprite": "bench0844"
+    },
+    {
+      "device_id": "bench-device-0845",
+      "sprite": "bench0845"
+    },
+    {
+      "device_id": "bench-device-0846",
+      "sprite": "bench0846"
+    },
+    {
+      "device_id": "bench-device-0847",
+      "sprite": "bench0847"
+    },
+    {
+      "device_id": "bench-device-0848",
+      "sprite": "bench0848"
+    },
+    {
+      "device_id": "bench-device-0849",
+      "sprite": "bench0849"
+    },
+    {
+      "device_id": "bench-device-0850",
+      "sprite": "bench0850"
+    },
+    {
+      "device_id": "bench-device-0851",
+      "sprite": "bench0851"
+    },
+    {
+      "device_id": "bench-device-0852",
+      "sprite": "bench0852"
+    },
+    {
+      "device_id": "bench-device-0853",
+      "sprite": "bench0853"
+    },
+    {
+      "device_id": "bench-device-0854",
+      "sprite": "bench0854"
+    },
+    {
+      "device_id": "bench-device-0855",
+      "sprite": "bench0855"
+    },
+    {
+      "device_id": "bench-device-0856",
+      "sprite": "bench0856"
+    },
+    {
+      "device_id": "bench-device-0857",
+      "sprite": "bench0857"
+    },
+    {
+      "device_id": "bench-device-0858",
+      "sprite": "bench0858"
+    },
+    {
+      "device_id": "bench-device-0859",
+      "sprite": "bench0859"
+    },
+    {
+      "device_id": "bench-device-0860",
+      "sprite": "bench0860"
+    },
+    {
+      "device_id": "bench-device-0861",
+      "sprite": "bench0861"
+    },
+    {
+      "device_id": "bench-device-0862",
+      "sprite": "bench0862"
+    },
+    {
+      "device_id": "bench-device-0863",
+      "sprite": "bench0863"
+    },
+    {
+      "device_id": "bench-device-0864",
+      "sprite": "bench0864"
+    },
+    {
+      "device_id": "bench-device-0865",
+      "sprite": "bench0865"
+    },
+    {
+      "device_id": "bench-device-0866",
+      "sprite": "bench0866"
+    },
+    {
+      "device_id": "bench-device-0867",
+      "sprite": "bench0867"
+    },
+    {
+      "device_id": "bench-device-0868",
+      "sprite": "bench0868"
+    },
+    {
+      "device_id": "bench-device-0869",
+      "sprite": "bench0869"
+    },
+    {
+      "device_id": "bench-device-0870",
+      "sprite": "bench0870"
+    },
+    {
+      "device_id": "bench-device-0871",
+      "sprite": "bench0871"
+    },
+    {
+      "device_id": "bench-device-0872",
+      "sprite": "bench0872"
+    },
+    {
+      "device_id": "bench-device-0873",
+      "sprite": "bench0873"
+    },
+    {
+      "device_id": "bench-device-0874",
+      "sprite": "bench0874"
+    },
+    {
+      "device_id": "bench-device-0875",
+      "sprite": "bench0875"
+    },
+    {
+      "device_id": "bench-device-0876",
+      "sprite": "bench0876"
+    },
+    {
+      "device_id": "bench-device-0877",
+      "sprite": "bench0877"
+    },
+    {
+      "device_id": "bench-device-0878",
+      "sprite": "bench0878"
+    },
+    {
+      "device_id": "bench-device-0879",
+      "sprite": "bench0879"
+    },
+    {
+      "device_id": "bench-device-0880",
+      "sprite": "bench0880"
+    },
+    {
+      "device_id": "bench-device-0881",
+      "sprite": "bench0881"
+    },
+    {
+      "device_id": "bench-device-0882",
+      "sprite": "bench0882"
+    },
+    {
+      "device_id": "bench-device-0883",
+      "sprite": "bench0883"
+    },
+    {
+      "device_id": "bench-device-0884",
+      "sprite": "bench0884"
+    },
+    {
+      "device_id": "bench-device-0885",
+      "sprite": "bench0885"
+    },
+    {
+      "device_id": "bench-device-0886",
+      "sprite": "bench0886"
+    },
+    {
+      "device_id": "bench-device-0887",
+      "sprite": "bench0887"
+    },
+    {
+      "device_id": "bench-device-0888",
+      "sprite": "bench0888"
+    },
+    {
+      "device_id": "bench-device-0889",
+      "sprite": "bench0889"
+    },
+    {
+      "device_id": "bench-device-0890",
+      "sprite": "bench0890"
+    },
+    {
+      "device_id": "bench-device-0891",
+      "sprite": "bench0891"
+    },
+    {
+      "device_id": "bench-device-0892",
+      "sprite": "bench0892"
+    },
+    {
+      "device_id": "bench-device-0893",
+      "sprite": "bench0893"
+    },
+    {
+      "device_id": "bench-device-0894",
+      "sprite": "bench0894"
+    },
+    {
+      "device_id": "bench-device-0895",
+      "sprite": "bench0895"
+    },
+    {
+      "device_id": "bench-device-0896",
+      "sprite": "bench0896"
+    },
+    {
+      "device_id": "bench-device-0897",
+      "sprite": "bench0897"
+    },
+    {
+      "device_id": "bench-device-0898",
+      "sprite": "bench0898"
+    },
+    {
+      "device_id": "bench-device-0899",
+      "sprite": "bench0899"
+    },
+    {
+      "device_id": "bench-device-0900",
+      "sprite": "bench0900"
+    },
+    {
+      "device_id": "bench-device-0901",
+      "sprite": "bench0901"
+    },
+    {
+      "device_id": "bench-device-0902",
+      "sprite": "bench0902"
+    },
+    {
+      "device_id": "bench-device-0903",
+      "sprite": "bench0903"
+    },
+    {
+      "device_id": "bench-device-0904",
+      "sprite": "bench0904"
+    },
+    {
+      "device_id": "bench-device-0905",
+      "sprite": "bench0905"
+    },
+    {
+      "device_id": "bench-device-0906",
+      "sprite": "bench0906"
+    },
+    {
+      "device_id": "bench-device-0907",
+      "sprite": "bench0907"
+    },
+    {
+      "device_id": "bench-device-0908",
+      "sprite": "bench0908"
+    },
+    {
+      "device_id": "bench-device-0909",
+      "sprite": "bench0909"
+    },
+    {
+      "device_id": "bench-device-0910",
+      "sprite": "bench0910"
+    },
+    {
+      "device_id": "bench-device-0911",
+      "sprite": "bench0911"
+    },
+    {
+      "device_id": "bench-device-0912",
+      "sprite": "bench0912"
+    },
+    {
+      "device_id": "bench-device-0913",
+      "sprite": "bench0913"
+    },
+    {
+      "device_id": "bench-device-0914",
+      "sprite": "bench0914"
+    },
+    {
+      "device_id": "bench-device-0915",
+      "sprite": "bench0915"
+    },
+    {
+      "device_id": "bench-device-0916",
+      "sprite": "bench0916"
+    },
+    {
+      "device_id": "bench-device-0917",
+      "sprite": "bench0917"
+    },
+    {
+      "device_id": "bench-device-0918",
+      "sprite": "bench0918"
+    },
+    {
+      "device_id": "bench-device-0919",
+      "sprite": "bench0919"
+    },
+    {
+      "device_id": "bench-device-0920",
+      "sprite": "bench0920"
+    },
+    {
+      "device_id": "bench-device-0921",
+      "sprite": "bench0921"
+    },
+    {
+      "device_id": "bench-device-0922",
+      "sprite": "bench0922"
+    },
+    {
+      "device_id": "bench-device-0923",
+      "sprite": "bench0923"
+    },
+    {
+      "device_id": "bench-device-0924",
+      "sprite": "bench0924"
+    },
+    {
+      "device_id": "bench-device-0925",
+      "sprite": "bench0925"
+    },
+    {
+      "device_id": "bench-device-0926",
+      "sprite": "bench0926"
+    },
+    {
+      "device_id": "bench-device-0927",
+      "sprite": "bench0927"
+    },
+    {
+      "device_id": "bench-device-0928",
+      "sprite": "bench0928"
+    },
+    {
+      "device_id": "bench-device-0929",
+      "sprite": "bench0929"
+    },
+    {
+      "device_id": "bench-device-0930",
+      "sprite": "bench0930"
+    },
+    {
+      "device_id": "bench-device-0931",
+      "sprite": "bench0931"
+    },
+    {
+      "device_id": "bench-device-0932",
+      "sprite": "bench0932"
+    },
+    {
+      "device_id": "bench-device-0933",
+      "sprite": "bench0933"
+    },
+    {
+      "device_id": "bench-device-0934",
+      "sprite": "bench0934"
+    },
+    {
+      "device_id": "bench-device-0935",
+      "sprite": "bench0935"
+    },
+    {
+      "device_id": "bench-device-0936",
+      "sprite": "bench0936"
+    },
+    {
+      "device_id": "bench-device-0937",
+      "sprite": "bench0937"
+    },
+    {
+      "device_id": "bench-device-0938",
+      "sprite": "bench0938"
+    },
+    {
+      "device_id": "bench-device-0939",
+      "sprite": "bench0939"
+    },
+    {
+      "device_id": "bench-device-0940",
+      "sprite": "bench0940"
+    },
+    {
+      "device_id": "bench-device-0941",
+      "sprite": "bench0941"
+    },
+    {
+      "device_id": "bench-device-0942",
+      "sprite": "bench0942"
+    },
+    {
+      "device_id": "bench-device-0943",
+      "sprite": "bench0943"
+    },
+    {
+      "device_id": "bench-device-0944",
+      "sprite": "bench0944"
+    },
+    {
+      "device_id": "bench-device-0945",
+      "sprite": "bench0945"
+    },
+    {
+      "device_id": "bench-device-0946",
+      "sprite": "bench0946"
+    },
+    {
+      "device_id": "bench-device-0947",
+      "sprite": "bench0947"
+    },
+    {
+      "device_id": "bench-device-0948",
+      "sprite": "bench0948"
+    },
+    {
+      "device_id": "bench-device-0949",
+      "sprite": "bench0949"
+    },
+    {
+      "device_id": "bench-device-0950",
+      "sprite": "bench0950"
+    },
+    {
+      "device_id": "bench-device-0951",
+      "sprite": "bench0951"
+    },
+    {
+      "device_id": "bench-device-0952",
+      "sprite": "bench0952"
+    },
+    {
+      "device_id": "bench-device-0953",
+      "sprite": "bench0953"
+    },
+    {
+      "device_id": "bench-device-0954",
+      "sprite": "bench0954"
+    },
+    {
+      "device_id": "bench-device-0955",
+      "sprite": "bench0955"
+    },
+    {
+      "device_id": "bench-device-0956",
+      "sprite": "bench0956"
+    },
+    {
+      "device_id": "bench-device-0957",
+      "sprite": "bench0957"
+    },
+    {
+      "device_id": "bench-device-0958",
+      "sprite": "bench0958"
+    },
+    {
+      "device_id": "bench-device-0959",
+      "sprite": "bench0959"
+    },
+    {
+      "device_id": "bench-device-0960",
+      "sprite": "bench0960"
+    },
+    {
+      "device_id": "bench-device-0961",
+      "sprite": "bench0961"
+    },
+    {
+      "device_id": "bench-device-0962",
+      "sprite": "bench0962"
+    },
+    {
+      "device_id": "bench-device-0963",
+      "sprite": "bench0963"
+    },
+    {
+      "device_id": "bench-device-0964",
+      "sprite": "bench0964"
+    },
+    {
+      "device_id": "bench-device-0965",
+      "sprite": "bench0965"
+    },
+    {
+      "device_id": "bench-device-0966",
+      "sprite": "bench0966"
+    },
+    {
+      "device_id": "bench-device-0967",
+      "sprite": "bench0967"
+    },
+    {
+      "device_id": "bench-device-0968",
+      "sprite": "bench0968"
+    },
+    {
+      "device_id": "bench-device-0969",
+      "sprite": "bench0969"
+    },
+    {
+      "device_id": "bench-device-0970",
+      "sprite": "bench0970"
+    },
+    {
+      "device_id": "bench-device-0971",
+      "sprite": "bench0971"
+    },
+    {
+      "device_id": "bench-device-0972",
+      "sprite": "bench0972"
+    },
+    {
+      "device_id": "bench-device-0973",
+      "sprite": "bench0973"
+    },
+    {
+      "device_id": "bench-device-0974",
+      "sprite": "bench0974"
+    },
+    {
+      "device_id": "bench-device-0975",
+      "sprite": "bench0975"
+    },
+    {
+      "device_id": "bench-device-0976",
+      "sprite": "bench0976"
+    },
+    {
+      "device_id": "bench-device-0977",
+      "sprite": "bench0977"
+    },
+    {
+      "device_id": "bench-device-0978",
+      "sprite": "bench0978"
+    },
+    {
+      "device_id": "bench-device-0979",
+      "sprite": "bench0979"
+    },
+    {
+      "device_id": "bench-device-0980",
+      "sprite": "bench0980"
+    },
+    {
+      "device_id": "bench-device-0981",
+      "sprite": "bench0981"
+    },
+    {
+      "device_id": "bench-device-0982",
+      "sprite": "bench0982"
+    },
+    {
+      "device_id": "bench-device-0983",
+      "sprite": "bench0983"
+    },
+    {
+      "device_id": "bench-device-0984",
+      "sprite": "bench0984"
+    },
+    {
+      "device_id": "bench-device-0985",
+      "sprite": "bench0985"
+    },
+    {
+      "device_id": "bench-device-0986",
+      "sprite": "bench0986"
+    },
+    {
+      "device_id": "bench-device-0987",
+      "sprite": "bench0987"
+    },
+    {
+      "device_id": "bench-device-0988",
+      "sprite": "bench0988"
+    },
+    {
+      "device_id": "bench-device-0989",
+      "sprite": "bench0989"
+    },
+    {
+      "device_id": "bench-device-0990",
+      "sprite": "bench0990"
+    },
+    {
+      "device_id": "bench-device-0991",
+      "sprite": "bench0991"
+    },
+    {
+      "device_id": "bench-device-0992",
+      "sprite": "bench0992"
+    },
+    {
+      "device_id": "bench-device-0993",
+      "sprite": "bench0993"
+    },
+    {
+      "device_id": "bench-device-0994",
+      "sprite": "bench0994"
+    },
+    {
+      "device_id": "bench-device-0995",
+      "sprite": "bench0995"
+    },
+    {
+      "device_id": "bench-device-0996",
+      "sprite": "bench0996"
+    },
+    {
+      "device_id": "bench-device-0997",
+      "sprite": "bench0997"
+    },
+    {
+      "device_id": "bench-device-0998",
+      "sprite": "bench0998"
+    },
+    {
+      "device_id": "bench-device-0999",
+      "sprite": "bench0999"
+    }
+  ]
+}

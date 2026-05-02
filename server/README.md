@@ -108,6 +108,78 @@ python3 scripts/room_broadcast_smoke.py \
 
 The script opens many clients in pairs, sends one round of `state` broadcasts, and checks that each online peer is paired with exactly one other peer.
 
+Important: the script connects using the real `owner_device_id + sprite name` pairs returned by `GET /api/v1/sprites`. It is not enough to have many sprite names; the server must already contain enough uploaded public sprites for the target peer count.
+
+Seed benchmark sprites first when you are testing an empty local server:
+
+```bash
+cd server
+python3 scripts/seed_benchmark_sprites.py \
+  --server http://127.0.0.1:8787 \
+  --count 1000 \
+  --prefix bench \
+  --peers-output ./benchmarks/bench-1000peers.json
+```
+
+### Save Results To A File
+
+Use `--output` to keep each run as a JSON artifact for later comparison:
+
+```bash
+cd server
+python3 scripts/room_broadcast_smoke.py \
+  --server http://127.0.0.1:8787 \
+  --mode random \
+  --pairs 500 \
+  --listen-seconds 10 \
+  --peers-file ./benchmarks/bench-1000peers.json \
+  --output ./benchmarks/random-1000peers.json
+```
+
+### Sample CPU And Memory
+
+If you also want CPU and memory numbers, pass the server process id with `--pid`. The script samples `%CPU` and `RSS` via `ps` during the test and adds min/avg/max values to the JSON output.
+
+Example:
+
+```bash
+cd server
+SERVER_PID="$(pgrep -f './eggs-server|-addr :8787' | head -n 1)"
+python3 scripts/room_broadcast_smoke.py \
+  --server http://127.0.0.1:8787 \
+  --mode random \
+  --pairs 500 \
+  --listen-seconds 10 \
+  --peers-file ./benchmarks/bench-1000peers.json \
+  --pid "$SERVER_PID" \
+  --sample-interval 0.5 \
+  --output ./benchmarks/random-1000peers-with-metrics.json
+```
+
+The output JSON includes:
+
+- `min_room_snapshot`, `max_room_snapshot`
+- `min_peer_joined`, `max_peer_joined`
+- `min_peer_state`, `max_peer_state`
+- `errors`
+- `process.cpu_percent.min|avg|max` when `--pid` is set
+- `process.rss_mb.min|avg|max` when `--pid` is set
+
+### Recommended Comparison Workflow
+
+When you change the matchmaking or WebSocket code:
+
+1. Run the same `--pairs`, `--listen-seconds`, and `--sample-interval` values as a previous benchmark.
+2. Save the new result to a fresh file under `server/benchmarks/` or another timestamped folder.
+3. Compare:
+   - connection correctness: `min_peer_joined`, `max_peer_joined`, `min_peer_state`, `max_peer_state`
+   - resource usage: `process.cpu_percent.max`, `process.rss_mb.max`
+   - regressions: any non-empty `errors`
+
+For a quick local stress target, `--pairs 500` means `1000` concurrent peers.
+
+The repository currently includes one functional baseline sample at [benchmarks/random-1000peers-short-success.json](benchmarks/random-1000peers-short-success.json). It captures a successful short `1000`-peer run without CPU/RSS metrics. If a local run returns `HTTP 502`, verify that the Go server is actually listening with `lsof -nP -iTCP:8787 -sTCP:LISTEN` and that `/healthz` returns `200`; in this workspace the earlier `502` came from a detached temporary server that never started, so the request hit the local proxy layer instead of the Go server.
+
 ## Concurrency Notes
 
 - Online peer presence is maintained in memory by the WebSocket hub.

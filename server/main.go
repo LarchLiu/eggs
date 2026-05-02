@@ -42,7 +42,12 @@ const (
 
 	deviceRetention       = 30 * 24 * time.Hour
 	deviceCleanupInterval = time.Hour
+	wsPingInterval        = 15 * time.Second
+	wsReadTimeout         = 45 * time.Second
+	wsWriteTimeout        = 10 * time.Second
 )
+
+var errPeerSendQueueFull = errors.New("peer send queue full")
 
 type server struct {
 	db              *sql.DB
@@ -93,13 +98,18 @@ type wsClient struct {
 	sprite    spriteRecord
 	sendCh    chan []byte
 	doneCh    chan struct{}
+	peerMu    sync.RWMutex
+	peer      *wsClient
 	stateMu   sync.RWMutex
 	state     string
+	closeMu   sync.Mutex
+	closeInfo string
 	closeOnce sync.Once
 }
 
 type hub struct {
-	mu            sync.Mutex
+	onlineMu      sync.Mutex
+	matchMu       sync.Mutex
 	rooms         map[string]*roomState
 	roomByClient  map[string]string
 	waitingRandom *list.List
@@ -595,10 +605,6 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		doneCh:   make(chan struct{}),
 		state:    "hatched",
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if err := upsertDevice(context.Background(), s.db, deviceID, now); err == nil {
-		s.maybeCleanupDevices(context.Background())
-	}
 
 	deliveries, err := s.hub.join(client, roomCode)
 	if err != nil {
@@ -608,17 +614,31 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	go client.writeLoop()
 	sendDeliveries(deliveries)
-	log.Printf("ws joined mode=%s room=%s client=%s device=%s sprite=%s", mode, roomCode, client.id, deviceID, spriteRecord.Name)
 
 	defer func() {
 		sendDeliveries(s.hub.leave(client))
 		client.close()
-		log.Printf("ws left mode=%s room=%s client=%s", mode, roomCode, client.id)
+		reason := client.closeReason()
+		if reason == "" {
+			reason = "closed"
+		}
+		log.Printf("ws closed mode=%s room=%s client=%s device=%s sprite=%s reason=%s", mode, roomCode, client.id, deviceID, spriteRecord.Name, reason)
 	}()
 
 	for {
-		payload, err := readWebSocketFrame(client.reader)
+		if err := client.conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
+			client.closeWithReason(err.Error())
+			return
+		}
+		payload, err := readWebSocketTextMessage(client.conn, client.reader)
 		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				client.closeWithReason("read timeout")
+			} else if errors.Is(err, io.EOF) {
+				client.closeWithReason("peer closed")
+			} else {
+				client.closeWithReason(err.Error())
+			}
 			return
 		}
 		var msg map[string]any
@@ -753,12 +773,15 @@ func (s *server) requestBaseURL(r *http.Request) string {
 }
 
 func (h *hub) join(c *wsClient, roomCode string) ([]delivery, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.onlineMu.Lock()
 	if existing := h.onlineSprites[c.spriteID]; existing != nil {
+		h.onlineMu.Unlock()
 		return nil, fmt.Errorf("sprite is already online")
 	}
 	h.onlineSprites[c.spriteID] = c
+	h.matchMu.Lock()
+	defer h.matchMu.Unlock()
+	defer h.onlineMu.Unlock()
 	if c.mode == "room" {
 		deliveries, err := h.joinInviteRoomLocked(c, roomCode)
 		if err != nil {
@@ -781,6 +804,9 @@ func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string) ([]delivery, er
 	}
 	existing := room.peers()
 	room.add(c)
+	if len(existing) == 1 {
+		linkPeers(existing[0], c)
+	}
 	c.roomCode = roomCode
 	h.roomByClient[c.id] = roomCode
 	deliveries := []delivery{{target: c, msg: roomSnapshotMessage(existing)}}
@@ -795,6 +821,7 @@ func (h *hub) joinRandomLocked(c *wsClient) []delivery {
 		roomCode := "random-" + randomID()
 		room := &roomState{first: peer, second: c}
 		h.rooms[roomCode] = room
+		linkPeers(peer, c)
 		peer.roomCode = roomCode
 		c.roomCode = roomCode
 		h.roomByClient[peer.id] = roomCode
@@ -811,9 +838,11 @@ func (h *hub) joinRandomLocked(c *wsClient) []delivery {
 }
 
 func (h *hub) leave(c *wsClient) []delivery {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.onlineMu.Lock()
 	delete(h.onlineSprites, c.spriteID)
+	h.matchMu.Lock()
+	defer h.matchMu.Unlock()
+	defer h.onlineMu.Unlock()
 	h.removeWaitingLocked(c.id)
 	roomCode := h.roomByClient[c.id]
 	if roomCode == "" {
@@ -826,6 +855,7 @@ func (h *hub) leave(c *wsClient) []delivery {
 		return nil
 	}
 	peer := room.remove(c.id)
+	unlinkPeers(c, peer)
 	delete(h.roomByClient, c.id)
 	c.roomCode = ""
 	deliveries := make([]delivery, 0, 2)
@@ -858,10 +888,7 @@ func (h *hub) broadcast(sender *wsClient, msg map[string]any) []delivery {
 	if err != nil {
 		return nil
 	}
-	h.mu.Lock()
-	room := h.rooms[h.roomByClient[sender.id]]
-	peer := room.peerOf(sender.id)
-	h.mu.Unlock()
+	peer := sender.getPeer()
 	if peer == nil {
 		return nil
 	}
@@ -1006,7 +1033,7 @@ func sendDeliveries(items []delivery) {
 			err = item.target.enqueueJSON(item.msg)
 		}
 		if err != nil {
-			go item.target.close()
+			go item.target.closeWithReason(err.Error())
 		}
 	}
 }
@@ -1023,7 +1050,37 @@ func (c *wsClient) enqueue(data []byte) error {
 	case <-c.doneCh:
 		return errors.New("peer closed")
 	default:
-		return errors.New("peer send queue full")
+		return errPeerSendQueueFull
+	}
+}
+
+func (c *wsClient) setPeer(peer *wsClient) {
+	c.peerMu.Lock()
+	defer c.peerMu.Unlock()
+	c.peer = peer
+}
+
+func (c *wsClient) getPeer() *wsClient {
+	c.peerMu.RLock()
+	defer c.peerMu.RUnlock()
+	return c.peer
+}
+
+func linkPeers(a *wsClient, b *wsClient) {
+	if a != nil {
+		a.setPeer(b)
+	}
+	if b != nil {
+		b.setPeer(a)
+	}
+}
+
+func unlinkPeers(a *wsClient, b *wsClient) {
+	if a != nil {
+		a.setPeer(nil)
+	}
+	if b != nil && b.getPeer() == a {
+		b.setPeer(nil)
 	}
 }
 
@@ -1032,6 +1089,23 @@ func (c *wsClient) close() {
 		close(c.doneCh)
 		_ = c.conn.Close()
 	})
+}
+
+func (c *wsClient) closeWithReason(reason string) {
+	if strings.TrimSpace(reason) != "" {
+		c.closeMu.Lock()
+		if c.closeInfo == "" {
+			c.closeInfo = reason
+		}
+		c.closeMu.Unlock()
+	}
+	c.close()
+}
+
+func (c *wsClient) closeReason() string {
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+	return c.closeInfo
 }
 
 func (c *wsClient) appendPresence(msg map[string]any) {
@@ -1057,16 +1131,31 @@ func (c *wsClient) applyIncomingMessage(messageType string, msg map[string]any) 
 }
 
 func (c *wsClient) writeLoop() {
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.doneCh:
 			return
+		case <-ticker.C:
+			if err := c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				c.closeWithReason(err.Error())
+				return
+			}
+			if err := writeWebSocketControl(c.conn, 0x9, nil); err != nil {
+				c.closeWithReason(err.Error())
+				return
+			}
 		case payload, ok := <-c.sendCh:
 			if !ok {
 				return
 			}
+			if err := c.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+				c.closeWithReason(err.Error())
+				return
+			}
 			if err := writeWebSocketText(c.conn, payload); err != nil {
-				c.close()
+				c.closeWithReason(err.Error())
 				return
 			}
 		}
@@ -1110,14 +1199,37 @@ func websocketAccept(key string) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-func readWebSocketFrame(r *bufio.Reader) ([]byte, error) {
+func readWebSocketTextMessage(conn net.Conn, r *bufio.Reader) ([]byte, error) {
+	for {
+		opcode, payload, err := readWebSocketFrame(r)
+		if err != nil {
+			return nil, err
+		}
+		switch opcode {
+		case 0x1:
+			return payload, nil
+		case 0x8:
+			return nil, io.EOF
+		case 0x9:
+			if err := writeWebSocketControl(conn, 0xA, payload); err != nil {
+				return nil, err
+			}
+		case 0xA:
+			continue
+		default:
+			return nil, errors.New("unsupported websocket frame")
+		}
+	}
+}
+
+func readWebSocketFrame(r *bufio.Reader) (byte, []byte, error) {
 	h0, err := r.ReadByte()
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	h1, err := r.ReadByte()
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	opcode := h0 & 0x0f
 	masked := h1&0x80 != 0
@@ -1125,13 +1237,13 @@ func readWebSocketFrame(r *bufio.Reader) ([]byte, error) {
 	if length == 126 {
 		b := make([]byte, 2)
 		if _, err := io.ReadFull(r, b); err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		length = uint64(b[0])<<8 | uint64(b[1])
 	} else if length == 127 {
 		b := make([]byte, 8)
 		if _, err := io.ReadFull(r, b); err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		length = 0
 		for _, v := range b {
@@ -1139,34 +1251,32 @@ func readWebSocketFrame(r *bufio.Reader) ([]byte, error) {
 		}
 	}
 	if length > 1<<20 {
-		return nil, errors.New("websocket frame too large")
+		return 0, nil, errors.New("websocket frame too large")
 	}
 	var mask [4]byte
 	if masked {
 		if _, err := io.ReadFull(r, mask[:]); err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 	}
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	if masked {
 		for i := range payload {
 			payload[i] ^= mask[i%4]
 		}
 	}
-	if opcode == 0x8 {
-		return nil, io.EOF
-	}
-	if opcode != 0x1 {
-		return nil, errors.New("unsupported websocket frame")
-	}
-	return payload, nil
+	return opcode, payload, nil
 }
 
 func writeWebSocketText(w io.Writer, payload []byte) error {
-	header := []byte{0x81}
+	return writeWebSocketControl(w, 0x1, payload)
+}
+
+func writeWebSocketControl(w io.Writer, opcode byte, payload []byte) error {
+	header := []byte{0x80 | (opcode & 0x0f)}
 	n := len(payload)
 	if n < 126 {
 		header = append(header, byte(n))

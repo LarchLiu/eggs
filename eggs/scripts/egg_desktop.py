@@ -894,23 +894,44 @@ class SimpleWebSocket:
         return b"".join(chunks)
 
     def _recv_frame(self) -> bytes:
-        first, second = self._recv_exact(2)
-        opcode = first & 0x0F
-        masked = bool(second & 0x80)
-        length = second & 0x7F
-        if length == 126:
-            length = struct.unpack(">H", self._recv_exact(2))[0]
-        elif length == 127:
-            length = struct.unpack(">Q", self._recv_exact(8))[0]
-        mask = self._recv_exact(4) if masked else b""
-        payload = self._recv_exact(length)
-        if masked:
-            payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        if opcode == 0x8:
-            raise ConnectionError("websocket closed")
-        if opcode != 0x1:
-            return b"{}"
-        return payload
+        while True:
+            first, second = self._recv_exact(2)
+            opcode = first & 0x0F
+            masked = bool(second & 0x80)
+            length = second & 0x7F
+            if length == 126:
+                length = struct.unpack(">H", self._recv_exact(2))[0]
+            elif length == 127:
+                length = struct.unpack(">Q", self._recv_exact(8))[0]
+            mask = self._recv_exact(4) if masked else b""
+            payload = self._recv_exact(length)
+            if masked:
+                payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+            if opcode == 0x8:
+                raise ConnectionError("websocket closed")
+            if opcode == 0x9:
+                self._send_control(0xA, payload)
+                continue
+            if opcode == 0xA:
+                continue
+            if opcode != 0x1:
+                return b"{}"
+            return payload
+
+    def _send_control(self, opcode: int, payload: bytes = b"") -> None:
+        header = bytearray([0x80 | (opcode & 0x0F)])
+        length = len(payload)
+        if length < 126:
+            header.append(0x80 | length)
+        elif length <= 0xFFFF:
+            header.extend([0x80 | 126, (length >> 8) & 0xFF, length & 0xFF])
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack(">Q", length))
+        mask = os.urandom(4)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        with self.lock:
+            self.sock.sendall(bytes(header) + mask + masked)
 
 
 def websocket_url(server_url: str, query: dict[str, str]) -> str:
