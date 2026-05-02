@@ -20,7 +20,7 @@ cd server
 docker compose up -d --build
 ```
 
-The Docker build now follows the target platform provided by Docker or BuildKit, so the same `Dockerfile` works on both `amd64` and `arm64` hosts instead of always producing an `amd64` binary.
+The Docker build now follows the target platform provided by Docker or BuildKit. When those target variables are not set, it falls back to the builder container's own architecture, so the same `Dockerfile` works on both `amd64` and `arm64` hosts instead of always producing an `amd64` binary.
 
 This uses:
 
