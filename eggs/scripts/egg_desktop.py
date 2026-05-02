@@ -260,6 +260,13 @@ def normalize_sprite(value: str | None) -> str:
     return safe or DEFAULT_SPRITE
 
 
+def ensure_default_state() -> None:
+    ensure_app_dir()
+    if STATE_FILE.exists():
+        return
+    write_runtime_state(DEFAULT_SPRITE, default_state_for_sprite(DEFAULT_SPRITE))
+
+
 def read_runtime_state() -> tuple[str, str]:
     sprite = DEFAULT_SPRITE
     state = default_state_for_sprite(sprite)
@@ -437,6 +444,7 @@ def runtime_command() -> list[str] | None:
 def start_background() -> int:
     ensure_default_config()
     ensure_default_remote_config()
+    ensure_default_state()
     current = read_pid()
     if managed_process_alive(current):
         print(f"companion already running with pid {current}")
