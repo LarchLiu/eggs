@@ -574,6 +574,7 @@ final class RemoteEggActor {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        window.animationBehavior = .none
         window.level = .floating
         window.ignoresMouseEvents = true
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
@@ -594,14 +595,15 @@ final class RemoteEggActor {
         view.mirrored = x > anchorX
         window.setFrameOrigin(NSPoint(x: x, y: y))
         if !isVisible {
-            window.orderFrontRegardless()
+            window.alphaValue = 1
+            window.orderFront(nil)
             isVisible = true
         }
     }
 
     func hide() {
         guard isVisible else { return }
-        window.orderOut(nil)
+        window.alphaValue = 0
         isVisible = false
     }
 }
@@ -646,6 +648,7 @@ final class EggController {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        window.animationBehavior = .none
         window.level = .floating
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
