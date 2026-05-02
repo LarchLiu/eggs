@@ -593,6 +593,10 @@ def write_remote_peers(data: dict) -> None:
     write_json_file(REMOTE_PEERS_FILE, data)
 
 
+def empty_remote_peers(enabled: bool) -> dict:
+    return {"enabled": enabled, "connected": False, "peers": []}
+
+
 def cached_remote_sprite_from_index(peer_id: str) -> tuple[Path, Path, Path | None, str] | None:
     peer_key = safe_cache_name(peer_id)
     if not peer_key:
@@ -611,7 +615,7 @@ def cached_remote_sprite_from_index(peer_id: str) -> tuple[Path, Path, Path | No
     return image, metadata, config, str(index.get("name") or peer_key)
 
 
-def remote_peer_snapshot(peer_states: dict[str, dict]) -> dict:
+def remote_peer_snapshot(peer_states: dict[str, dict], connected: bool) -> dict:
     peers: list[dict] = []
     for peer_id, peer in peer_states.items():
         sprite_info = peer.get("sprite")
@@ -637,7 +641,7 @@ def remote_peer_snapshot(peer_states: dict[str, dict]) -> dict:
                 "config_path": config_path,
             }
         )
-    return {"enabled": True, "peers": peers}
+    return {"enabled": True, "connected": connected, "peers": peers}
 
 
 def start_remote_sidecar() -> int:
@@ -648,7 +652,7 @@ def start_remote_sidecar() -> int:
     if managed_remote_process_alive(current):
         return 0
     clear_remote_pid()
-    write_remote_peers({"enabled": True, "peers": []})
+    write_remote_peers(empty_remote_peers(True))
     command = [sys.executable, str(Path(__file__).resolve()), "remote-run"]
     with LOG_FILE.open("ab") as log:
         proc = subprocess.Popen(
@@ -667,6 +671,7 @@ def stop_remote_sidecar() -> int:
     pid = read_remote_pid()
     if not managed_remote_process_alive(pid):
         clear_remote_pid()
+        write_remote_peers(empty_remote_peers(remote_enabled()))
         return 0
     assert pid is not None
     os.kill(pid, signal.SIGTERM)
@@ -674,6 +679,7 @@ def stop_remote_sidecar() -> int:
     while time.time() < deadline:
         if not process_alive(pid):
             clear_remote_pid()
+            write_remote_peers(empty_remote_peers(remote_enabled()))
             return 0
         time.sleep(0.1)
     try:
@@ -681,6 +687,7 @@ def stop_remote_sidecar() -> int:
     except ProcessLookupError:
         pass
     clear_remote_pid()
+    write_remote_peers(empty_remote_peers(remote_enabled()))
     return 0
 
 
@@ -1989,21 +1996,34 @@ def run_gui() -> int:
 def run_remote_sidecar() -> int:
     ensure_app_dir()
     write_remote_pid(os.getpid())
+    stop_requested = threading.Event()
+
+    def request_stop(_signum, _frame) -> None:
+        stop_requested.set()
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    previous_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
     inbox: queue.Queue = queue.Queue()
     remote_session = RemoteSession(inbox) if remote_enabled() else None
     if remote_session is None:
-        write_remote_peers({"enabled": False, "peers": []})
+        write_remote_peers(empty_remote_peers(False))
         clear_remote_pid()
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGINT, previous_sigint)
         return 0
     remote_session.start()
     peer_states: dict[str, dict] = {}
     last_sprite, last_state = read_runtime_state()
+    remote_connected_state = False
     pending_sprite_announce = True
     pending_state_sync = True
     next_heartbeat_at = 0.0
-    write_remote_peers({"enabled": True, "peers": []})
+    write_remote_peers(empty_remote_peers(True))
     try:
-        while remote_enabled():
+        while remote_enabled() and not stop_requested.is_set():
             now = time.time()
             next_sprite, next_state = read_runtime_state()
             if next_sprite != last_sprite:
@@ -2024,20 +2044,24 @@ def run_remote_sidecar() -> int:
                     if remote_session.send({"type": "state", "state": last_state, "sprite": last_sprite}):
                         pending_state_sync = False
                         next_heartbeat_at = now + REMOTE_HEARTBEAT_SECONDS
-            drained = False
+            snapshot_changed = False
             while True:
                 try:
                     msg = inbox.get_nowait()
                 except queue.Empty:
                     break
-                drained = True
                 msg_type = str(msg.get("type", ""))
                 if msg_type == "remote_connected":
+                    remote_connected_state = True
                     pending_sprite_announce = True
                     pending_state_sync = True
                     next_heartbeat_at = 0.0
+                    snapshot_changed = True
                     continue
                 if msg_type == "remote_disconnected":
+                    remote_connected_state = False
+                    peer_states = {}
+                    snapshot_changed = True
                     continue
                 if msg_type == "room_snapshot":
                     peer_states = {}
@@ -2047,25 +2071,32 @@ def run_remote_sidecar() -> int:
                         peer_id = str(peer.get("peer_id", "")).strip()
                         if peer_id:
                             peer_states[peer_id] = peer
+                    snapshot_changed = True
                     continue
                 peer_id = str(msg.get("peer_id", "")).strip()
                 if not peer_id:
                     continue
                 if msg_type == "peer_left":
                     peer_states.pop(peer_id, None)
+                    snapshot_changed = True
                     continue
                 if msg_type in {"peer_joined", "peer_state", "peer_action", "peer_sprite_changed"}:
                     updated = dict(peer_states.get(peer_id, {}))
                     updated.update(msg)
                     peer_states[peer_id] = updated
-            if drained:
-                write_remote_peers(remote_peer_snapshot(peer_states))
+                    snapshot_changed = True
+            if snapshot_changed:
+                write_remote_peers(remote_peer_snapshot(peer_states, remote_connected_state))
             time.sleep(0.1)
     finally:
         if remote_session is not None:
             remote_session.close()
-        write_remote_peers(remote_peer_snapshot(peer_states) if remote_enabled() else {"enabled": False, "peers": []})
+        remote_connected_state = False
+        peer_states = {}
+        write_remote_peers(empty_remote_peers(remote_enabled()))
         clear_remote_pid()
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGINT, previous_sigint)
     return 0
 
 

@@ -27,7 +27,14 @@ This uses:
 - [Dockerfile](/Users/alex/Work/cloudgeek/eggs/server/Dockerfile)
 - [docker-compose.yml](/Users/alex/Work/cloudgeek/eggs/server/docker-compose.yml)
 
-Persistent data is stored in the Docker named volume `eggs-server-data` and mounted to `/data` in the container. If you previously used a host bind mount like `./data:/data`, copy `eggs.db` and the `assets/` directory into the named volume before switching if you want to keep existing uploads.
+Persistent data is stored in the Docker named volume `eggs-server-data` and mounted to `/data` in the container. The compose file pins the Docker volume name explicitly so rebuilds and restarts do not silently switch to a different project-scoped volume when the compose project name changes.
+
+Two important notes:
+
+- `docker compose up -d --build` keeps the existing volume and should keep `eggs.db`.
+- `docker compose down -v` deletes the named volume, so it will wipe the SQLite database and uploaded assets.
+
+If you previously used a host bind mount like `./data:/data`, copy `eggs.db` and the `assets/` directory into the named volume before switching if you want to keep existing uploads.
 
 Useful environment overrides:
 

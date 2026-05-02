@@ -4,7 +4,6 @@ import Darwin
 let defaultSpriteSize: CGFloat = 251
 let tickInterval: TimeInterval = 1.0 / 30.0
 let animationInterval: TimeInterval = 0.18
-let remotePeerGracePeriod: TimeInterval = 8.0
 let appDir = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".codex")
     .appendingPathComponent("eggs")
@@ -177,6 +176,8 @@ func readRemotePeers() -> [RemotePeerSnapshot] {
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let enabled = object["enabled"] as? Bool,
           enabled,
+          let connected = object["connected"] as? Bool,
+          connected,
           let peers = object["peers"] as? [[String: Any]] else {
         return []
     }
@@ -474,6 +475,7 @@ final class RemoteEggView: NSView {
     private var frames: [NSImage] = []
     private var frameIndex = 0
     private var nextFrameAdvance = Date()
+    var mirrored = false
 
     override var isOpaque: Bool { false }
     override var isFlipped: Bool { true }
@@ -528,7 +530,18 @@ final class RemoteEggView: NSView {
             framePosition = frameIndex % stateFrames.count
             shouldAdvance = true
         }
-        stateFrames[framePosition].draw(in: bounds)
+        let frameImage = stateFrames[framePosition]
+        if mirrored {
+            NSGraphicsContext.saveGraphicsState()
+            let transform = NSAffineTransform()
+            transform.translateX(by: bounds.width, yBy: 0)
+            transform.scaleX(by: -1, yBy: 1)
+            transform.concat()
+            frameImage.draw(in: bounds)
+            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            frameImage.draw(in: bounds)
+        }
         if shouldAdvance && Date() >= nextFrameAdvance {
             frameIndex += 1
             nextFrameAdvance = Date().addingTimeInterval(animationInterval)
@@ -543,7 +556,6 @@ final class RemoteEggActor {
     var spriteWidth: CGFloat
     var spriteHeight: CGFloat
     var offsetDistance: CGFloat
-    var offsetY: CGFloat
     private(set) var isVisible = false
 
     init(snapshot: RemotePeerSnapshot) {
@@ -552,7 +564,6 @@ final class RemoteEggActor {
         spriteWidth = CGFloat(spriteInfo?.frameWidth ?? Int(defaultSpriteSize))
         spriteHeight = CGFloat(spriteInfo?.frameHeight ?? Int(defaultSpriteSize))
         offsetDistance = CGFloat.random(in: 120...220)
-        offsetY = CGFloat.random(in: -40...40)
         view = RemoteEggView(frame: NSRect(x: 0, y: 0, width: spriteWidth, height: spriteHeight), snapshot: snapshot)
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: spriteWidth, height: spriteHeight),
@@ -571,14 +582,16 @@ final class RemoteEggActor {
         isVisible = true
     }
 
-    func update(snapshot: RemotePeerSnapshot, anchorX: CGFloat, anchorY: CGFloat, screenFrame: NSRect) {
+    func update(snapshot: RemotePeerSnapshot, anchorX: CGFloat, anchorY: CGFloat, anchorHeight: CGFloat, screenFrame: NSRect) {
         view.update(snapshot: snapshot)
         spriteWidth = view.frame.width
         spriteHeight = view.frame.height
         view.setFrameSize(NSSize(width: spriteWidth, height: spriteHeight))
         window.setContentSize(NSSize(width: spriteWidth, height: spriteHeight))
         let x = min(max(anchorX + offsetDistance, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - spriteWidth))
-        let y = min(max(anchorY + offsetY, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
+        let localBottom = anchorY + anchorHeight
+        let y = min(max(localBottom - spriteHeight, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
+        view.mirrored = x > anchorX
         window.setFrameOrigin(NSPoint(x: x, y: y))
         if !isVisible {
             window.orderFrontRegardless()
@@ -607,7 +620,6 @@ final class EggController {
     private var spriteHeight: CGFloat
     private var remoteActors: [String: RemoteEggActor] = [:]
     private var hiddenRemoteActors: [String: RemoteEggActor] = [:]
-    private var remoteActorLastSeenAt: [String: Date] = [:]
     private var nextRemoteCheck = Date()
 
     init() {
@@ -700,23 +712,16 @@ final class EggController {
     private func updateRemoteActors() {
         guard Date() >= nextRemoteCheck else { return }
         nextRemoteCheck = Date().addingTimeInterval(0.2)
-        let now = Date()
         let peers = readRemotePeers()
         let ids = Set(peers.map(\.peerID))
-        let stalePeerIDs = remoteActors.keys.filter {
-            guard !ids.contains($0) else { return false }
-            guard let lastSeenAt = remoteActorLastSeenAt[$0] else { return true }
-            return now.timeIntervalSince(lastSeenAt) >= remotePeerGracePeriod
-        }
+        let stalePeerIDs = remoteActors.keys.filter { !ids.contains($0) }
         for peerID in stalePeerIDs {
             guard let actor = remoteActors[peerID] else { continue }
             actor.hide()
             hiddenRemoteActors[peerID] = actor
             remoteActors.removeValue(forKey: peerID)
-            remoteActorLastSeenAt.removeValue(forKey: peerID)
         }
         for peer in peers {
-            remoteActorLastSeenAt[peer.peerID] = now
             let actor = remoteActors[peer.peerID] ?? {
                 if let existing = hiddenRemoteActors.removeValue(forKey: peer.peerID) {
                     remoteActors[peer.peerID] = existing
@@ -726,7 +731,7 @@ final class EggController {
                 remoteActors[peer.peerID] = created
                 return created
             }()
-            actor.update(snapshot: peer, anchorX: x, anchorY: y, screenFrame: screenFrame)
+            actor.update(snapshot: peer, anchorX: x, anchorY: y, anchorHeight: spriteHeight, screenFrame: screenFrame)
         }
     }
 }
