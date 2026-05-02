@@ -2,11 +2,19 @@ FROM golang:1.25-bookworm AS builder
 
 WORKDIR /src
 
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG TARGETVARIANT
+
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/eggs-server .
+RUN set -eux; \
+    export GOOS="$TARGETOS"; \
+    export GOARCH="$TARGETARCH"; \
+    if [ "$TARGETARCH" = "arm" ] && [ -n "$TARGETVARIANT" ]; then export GOARM="${TARGETVARIANT#v}"; fi; \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/eggs-server .
 
 FROM debian:bookworm-slim
 
