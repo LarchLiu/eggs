@@ -36,24 +36,22 @@ Remote interaction is opt-in. To connect this skill to a separately deployed rem
 ```bash
 python3 scripts/egg_desktop.py remote server http://localhost:8787
 python3 scripts/egg_desktop.py remote upload dino
-python3 scripts/egg_desktop.py remote random
-python3 scripts/egg_desktop.py restart
+python3 scripts/egg_desktop.py remote
+python3 scripts/egg_desktop.py remote status
 ```
 
-`remote random` joins a server-side waiting pool. After a match is found, the server creates a temporary private room for that pair.
+`remote` joins the server-side random waiting pool by default (equivalent to `remote random`). After a match is found, the server creates a temporary private room for that pair.
 
 For invite rooms:
 
 ```bash
 python3 scripts/egg_desktop.py remote room ABC123
-python3 scripts/egg_desktop.py restart
 ```
 
 To leave:
 
 ```bash
 python3 scripts/egg_desktop.py remote leave
-python3 scripts/egg_desktop.py restart
 ```
 
 For state changes:
@@ -138,7 +136,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 
 - Use only the bundled `scripts/egg_desktop.py`; it has no third-party Python dependencies.
 - On macOS, the manager compiles and launches the bundled native Swift/Cocoa overlay at first run. This requires `python3` and the macOS Swift compiler, but no npm, Electron, PyPI packages, or external assets.
-- When remote interaction is enabled, the manager launches the Python/Tk runtime instead of the Swift runtime so it can display multiple remote actors and synchronize over WebSocket.
+- When remote interaction is enabled, the Swift runtime remains the display runtime. A separate Python sidecar handles remote WebSocket sync and writes `~/.codex/eggs/remote-peers.json` for Swift to render remote peers.
 - On non-macOS, the manager falls back to its Python/Tk runtime. If Tkinter is unavailable, report that the local Python build cannot display the fallback GUI.
 - The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
 - Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.

@@ -46,6 +46,8 @@ FRAME_MS = 33
 ANIMATION_MS = 180
 REMOTE_HEARTBEAT_SECONDS = 20.0
 REMOTE_RECONNECT_SECONDS = 2.0
+REMOTE_RECONNECT_MAX_SECONDS = 60.0
+REMOTE_RECONNECT_BACKOFF_FACTOR = 2.0
 DEFAULT_ANIMATIONS = [
     "unborn",
     "ready",
@@ -593,8 +595,14 @@ def write_remote_peers(data: dict) -> None:
     write_json_file(REMOTE_PEERS_FILE, data)
 
 
-def empty_remote_peers(enabled: bool) -> dict:
-    return {"enabled": enabled, "connected": False, "peers": []}
+def empty_remote_peers(enabled: bool, reconnecting: bool = False, error_message: str = "") -> dict:
+    return {
+        "enabled": enabled,
+        "connected": False,
+        "reconnecting": reconnecting,
+        "error": error_message.strip(),
+        "peers": [],
+    }
 
 
 def cached_remote_sprite_from_index(peer_id: str) -> tuple[Path, Path, Path | None, str] | None:
@@ -615,7 +623,12 @@ def cached_remote_sprite_from_index(peer_id: str) -> tuple[Path, Path, Path | No
     return image, metadata, config, str(index.get("name") or peer_key)
 
 
-def remote_peer_snapshot(peer_states: dict[str, dict], connected: bool) -> dict:
+def remote_peer_snapshot(
+    peer_states: dict[str, dict],
+    connected: bool,
+    reconnecting: bool = False,
+    error_message: str = "",
+) -> dict:
     peers: list[dict] = []
     for peer_id, peer in peer_states.items():
         sprite_info = peer.get("sprite")
@@ -641,7 +654,13 @@ def remote_peer_snapshot(peer_states: dict[str, dict], connected: bool) -> dict:
                 "config_path": config_path,
             }
         )
-    return {"enabled": True, "connected": connected, "peers": peers}
+    return {
+        "enabled": True,
+        "connected": connected,
+        "reconnecting": reconnecting,
+        "error": error_message.strip(),
+        "peers": peers,
+    }
 
 
 def start_remote_sidecar() -> int:
@@ -1023,13 +1042,15 @@ def apply_remote_runtime_change(ensure_running: bool = False) -> None:
 
 
 def remote_command(action: str | None, value: str | None = None) -> int:
-    if not action:
+    if action == "status":
         remote = read_remote_config()
         print(
             f"remote enabled={remote['enabled']} server={remote['server_url']} "
             f"mode={remote['mode']} room={remote.get('room', '') or '-'} sprite={remote.get('sprite', '') or '-'}"
         )
         return 0
+    if not action:
+        action = "random"
     if action == "on":
         write_remote_config({"enabled": True})
         apply_remote_runtime_change()
@@ -1450,6 +1471,25 @@ def file_hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def remote_error_is_permanent(reason: str) -> bool:
+    text = reason.strip().lower()
+    if not text:
+        return False
+    # WebSocket handshake errors that indicate bad client config/input are not transient.
+    permanent_markers = (
+        "http/1.1 400",
+        "http/1.1 401",
+        "http/1.1 403",
+        "http/1.1 404",
+        "http/1.1 409",
+        "http/1.1 422",
+        "unknown sprite for device",
+        "device_id and sprite are required",
+        "room code is required",
+    )
+    return any(marker in text for marker in permanent_markers)
+
+
 class RemoteSession:
     def __init__(self, inbox: queue.Queue):
         self.inbox = inbox
@@ -1471,6 +1511,7 @@ class RemoteSession:
         self.thread.start()
 
     def _run(self) -> None:
+        reconnect_delay = REMOTE_RECONNECT_SECONDS
         while not self.closed:
             query = {
                 "device_id": self.client["device_id"],
@@ -1482,14 +1523,28 @@ class RemoteSession:
             try:
                 self.ws = SimpleWebSocket(url)
                 self.connected = True
+                reconnect_delay = REMOTE_RECONNECT_SECONDS
                 self.inbox.put({"type": "remote_connected"})
                 while not self.closed:
                     self.inbox.put(self.ws.recv_json())
             except Exception as exc:
                 if not self.closed:
-                    self.inbox.put({"type": "remote_disconnected"})
-                    print(f"remote websocket stopped: {exc}", file=sys.stderr)
-                    time.sleep(REMOTE_RECONNECT_SECONDS)
+                    reason = str(exc).strip() or exc.__class__.__name__
+                    permanent = remote_error_is_permanent(reason)
+                    self.inbox.put(
+                        {
+                            "type": "remote_disconnected",
+                            "reason": reason,
+                            "permanent": permanent,
+                        }
+                    )
+                    print(f"remote websocket stopped: {reason}", file=sys.stderr)
+                    if permanent:
+                        while not self.closed:
+                            time.sleep(0.2)
+                        continue
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(REMOTE_RECONNECT_MAX_SECONDS, reconnect_delay * REMOTE_RECONNECT_BACKOFF_FACTOR)
             finally:
                 self.connected = False
                 self.ws = None
@@ -2018,10 +2073,12 @@ def run_remote_sidecar() -> int:
     peer_states: dict[str, dict] = {}
     last_sprite, last_state = read_runtime_state()
     remote_connected_state = False
+    remote_reconnecting_state = True
+    remote_error_message = ""
     pending_sprite_announce = True
     pending_state_sync = True
     next_heartbeat_at = 0.0
-    write_remote_peers(empty_remote_peers(True))
+    write_remote_peers(empty_remote_peers(True, reconnecting=True))
     try:
         while remote_enabled() and not stop_requested.is_set():
             now = time.time()
@@ -2053,13 +2110,19 @@ def run_remote_sidecar() -> int:
                 msg_type = str(msg.get("type", ""))
                 if msg_type == "remote_connected":
                     remote_connected_state = True
+                    remote_reconnecting_state = False
+                    remote_error_message = ""
                     pending_sprite_announce = True
                     pending_state_sync = True
                     next_heartbeat_at = 0.0
                     snapshot_changed = True
                     continue
                 if msg_type == "remote_disconnected":
+                    reason = str(msg.get("reason", "")).strip()
+                    permanent = bool(msg.get("permanent", False))
                     remote_connected_state = False
+                    remote_reconnecting_state = not permanent
+                    remote_error_message = reason
                     peer_states = {}
                     snapshot_changed = True
                     continue
@@ -2086,14 +2149,23 @@ def run_remote_sidecar() -> int:
                     peer_states[peer_id] = updated
                     snapshot_changed = True
             if snapshot_changed:
-                write_remote_peers(remote_peer_snapshot(peer_states, remote_connected_state))
+                write_remote_peers(
+                    remote_peer_snapshot(
+                        peer_states,
+                        remote_connected_state,
+                        reconnecting=remote_reconnecting_state,
+                        error_message=remote_error_message,
+                    )
+                )
             time.sleep(0.1)
     finally:
         if remote_session is not None:
             remote_session.close()
         remote_connected_state = False
+        remote_reconnecting_state = False
+        remote_error_message = ""
         peer_states = {}
-        write_remote_peers(empty_remote_peers(remote_enabled()))
+        write_remote_peers(empty_remote_peers(remote_enabled(), reconnecting=False))
         clear_remote_pid()
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)

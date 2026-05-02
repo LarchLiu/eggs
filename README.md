@@ -149,9 +149,9 @@ Join the random match pool or an invite room:
 
 ```bash
 cd eggs
-python3 scripts/egg_desktop.py remote random
+python3 scripts/egg_desktop.py remote
 python3 scripts/egg_desktop.py remote room ABC123
-python3 scripts/egg_desktop.py restart
+python3 scripts/egg_desktop.py remote status
 ```
 
 Leave or disable remote interaction:
@@ -160,10 +160,11 @@ Leave or disable remote interaction:
 cd eggs
 python3 scripts/egg_desktop.py remote leave
 python3 scripts/egg_desktop.py remote off
-python3 scripts/egg_desktop.py restart
 ```
 
-When remote interaction is enabled, the manager uses the Python/Tk runtime so it can display multiple local/remote actors and synchronize state over WebSocket. Local-only mode keeps the native Swift/Cocoa runtime on macOS.
+`remote` with no subcommand now defaults to random mode (same behavior as `remote random`), while `remote status` shows the current remote config.
+
+When remote interaction is enabled, the desktop companion still renders with the native Swift/Cocoa runtime on macOS. A separate Python sidecar process handles WebSocket sync and writes `~/.codex/eggs/remote-peers.json` (`connected`, `reconnecting`, `error`, and current peers) for the Swift runtime to consume.
 
 When remote interaction is enabled and you run `python3 scripts/egg_desktop.py sprite <name>`, the client tries to ensure that sprite already exists on the server with matching hashes. If needed, it uploads first and only then sends the live sprite-switch message to the paired peer. If the remote check or upload fails, the local companion still changes sprite, but the remote session stays on the previous sprite so the peer never switches to a missing asset.
 
