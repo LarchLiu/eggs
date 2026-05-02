@@ -3,13 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"container/list"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,21 +19,37 @@ import (
 	"time"
 )
 
-func newTestServer(t *testing.T) (*server, *httptest.Server) {
+type localTestServer struct {
+	URL    string
+	server *http.Server
+	ln     net.Listener
+}
+
+func (s *localTestServer) Close() {
+	_ = s.server.Close()
+	_ = s.ln.Close()
+}
+
+func newTestServer(t *testing.T) (*server, *localTestServer) {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "eggs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
+	configureDB(db)
 	s := &server{
-		db:               db,
-		dataDir:          dir,
-		assetsDir:        filepath.Join(dir, "assets"),
-		publicByDefault:  true,
-		heartbeatTimeout: defaultHeartbeatTimeout,
-		hub:              &hub{rooms: map[string]map[string]*wsClient{}, byID: map[string]*wsClient{}},
+		db:              db,
+		dataDir:         dir,
+		assetsDir:       filepath.Join(dir, "assets"),
+		publicByDefault: true,
+		hub: &hub{
+			rooms:         map[string]*roomState{},
+			roomByClient:  map[string]string{},
+			onlineSprites: map[string]*wsClient{},
+		},
+		assetCache:    &assetCache{byID: map[string]assetPaths{}},
+		deviceCleanup: &deviceCleanupState{},
 	}
 	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -43,10 +60,22 @@ func newTestServer(t *testing.T) (*server, *httptest.Server) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/sprites", s.handleSprites)
 	mux.HandleFunc("/api/v1/sprites/", s.handleSprite)
-	mux.HandleFunc("/api/v1/peers/", s.handlePeerSprite)
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/ws", s.handleWebSocket)
-	ts := httptest.NewServer(mux)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("network listen unavailable in sandbox: %v", err)
+		return nil, nil
+	}
+	httpServer := &http.Server{Handler: mux}
+	go func() {
+		_ = httpServer.Serve(listener)
+	}()
+	ts := &localTestServer{
+		URL:    "http://" + listener.Addr().String(),
+		server: httpServer,
+		ln:     listener,
+	}
 	t.Cleanup(func() {
 		ts.Close()
 		_ = db.Close()
@@ -86,6 +115,39 @@ func TestUploadAndListSprite(t *testing.T) {
 	}
 	if list.Sprites[0]["png_hash"] == "" || list.Sprites[0]["json_hash"] == "" {
 		t.Fatalf("list missing asset hashes: %#v", list.Sprites[0])
+	}
+}
+
+func TestRandomListSpritesReturnsPublicRecords(t *testing.T) {
+	_, ts := newTestServer(t)
+	uploadTestSprite(t, ts.URL, "device-a", "dino")
+	uploadTestSprite(t, ts.URL, "device-b", "goblin")
+	uploadTestSprite(t, ts.URL, "device-c", "cat")
+
+	resp, err := http.Get(ts.URL + "/api/v1/sprites?random=1&limit=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("random list status=%d", resp.StatusCode)
+	}
+	var list struct {
+		Sprites []map[string]any `json:"sprites"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Sprites) == 0 || len(list.Sprites) > 2 {
+		t.Fatalf("unexpected random list size=%d", len(list.Sprites))
+	}
+	for _, sprite := range list.Sprites {
+		if sprite["status"] != "public" {
+			t.Fatalf("random list returned non-public sprite: %#v", sprite)
+		}
+		if sprite["id"] == "" {
+			t.Fatalf("random list returned empty id: %#v", sprite)
+		}
 	}
 }
 
@@ -147,6 +209,71 @@ func TestDuplicateUploadDifferentDevicesReuseFiles(t *testing.T) {
 	}
 }
 
+func TestAssetRequestUsesCacheAfterWarmup(t *testing.T) {
+	s, ts := newTestServer(t)
+	record := uploadTestSprite(t, ts.URL, "device-a", "dino")
+	id, _ := record["id"].(string)
+	if id == "" {
+		t.Fatalf("missing id in record: %#v", record)
+	}
+
+	resp, err := http.Get(ts.URL + "/assets/" + id + "/sprite.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("warmup asset status=%d", resp.StatusCode)
+	}
+
+	if _, ok := s.assetCacheLookup(id); !ok {
+		t.Fatalf("expected asset cache to contain %q after warmup", id)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM sprites WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = http.Get(ts.URL + "/assets/" + id + "/sprite.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("cached asset status=%d", resp.StatusCode)
+	}
+}
+
+func TestMaybeCleanupDevicesDeletesExpiredRows(t *testing.T) {
+	s, _ := newTestServer(t)
+	stale := time.Now().UTC().Add(-(deviceRetention + 2*time.Hour)).Format(time.RFC3339)
+	fresh := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.Exec(`INSERT INTO devices(id, created_at, last_seen_at) VALUES(?, ?, ?)`, "stale-device", stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO devices(id, created_at, last_seen_at) VALUES(?, ?, ?)`, "fresh-device", fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+
+	s.maybeCleanupDevices(context.Background())
+
+	var staleCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE id='stale-device'`).Scan(&staleCount); err != nil {
+		t.Fatal(err)
+	}
+	if staleCount != 0 {
+		t.Fatalf("stale device rows=%d, want 0", staleCount)
+	}
+
+	var freshCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE id='fresh-device'`).Scan(&freshCount); err != nil {
+		t.Fatal(err)
+	}
+	if freshCount != 1 {
+		t.Fatalf("fresh device rows=%d, want 1", freshCount)
+	}
+}
+
 func TestRejectInvalidMetadata(t *testing.T) {
 	_, ts := newTestServer(t)
 	body, contentType := multipartUploadBody(t, map[string]string{
@@ -168,115 +295,185 @@ func TestRejectInvalidMetadata(t *testing.T) {
 
 func TestWebSocketRoomBroadcastAndIsolation(t *testing.T) {
 	_, ts := newTestServer(t)
-	spriteA := uploadTestSprite(t, ts.URL, "device-a", "dino")["id"].(string)
-	spriteB := uploadTestSprite(t, ts.URL, "device-b", "goblin")["id"].(string)
-	spriteC := uploadTestSprite(t, ts.URL, "device-c", "cat")["id"].(string)
+	uploadTestSprite(t, ts.URL, "device-a", "dino")
+	uploadTestSprite(t, ts.URL, "device-b", "goblin")
+	uploadTestSprite(t, ts.URL, "device-c", "cat")
 
-	a := dialTestWS(t, ts.URL, "device-a", spriteA, "room", "ABC")
+	a := dialTestWS(t, ts.URL, "device-a", "dino", "room", "ABC")
 	defer a.Close()
-	b := dialTestWS(t, ts.URL, "device-b", spriteB, "room", "ABC")
+	writeJSONFrame(t, a, map[string]any{"type": "state", "state": "walk"})
+	b := dialTestWS(t, ts.URL, "device-b", "goblin", "room", "ABC")
 	defer b.Close()
-	c := dialTestWS(t, ts.URL, "device-c", spriteC, "room", "XYZ")
+	c := dialTestWS(t, ts.URL, "device-c", "cat", "room", "XYZ")
 	defer c.Close()
 
 	joined := readJSONFrame(t, a)
-	if joined["type"] != "peer_joined" || joined["sprite_id"] != spriteB {
+	if joined["type"] != "peer_joined" {
 		t.Fatalf("unexpected join message: %#v", joined)
 	}
-	existing := readJSONFrame(t, b)
-	if existing["type"] != "peer_joined" || existing["sprite_id"] != spriteA {
-		t.Fatalf("unexpected existing peer message: %#v", existing)
+	joinedSprite, _ := joined["sprite"].(map[string]any)
+	if joinedSprite["name"] != "goblin" {
+		t.Fatalf("unexpected joined sprite: %#v", joined)
 	}
-	writeJSONFrame(t, a, map[string]any{"type": "state", "state": "walk"})
+	if joined["state"] != "hatched" {
+		t.Fatalf("joined peer should include initial state: %#v", joined)
+	}
+	snapshot := readJSONFrame(t, b)
+	if snapshot["type"] != "room_snapshot" {
+		t.Fatalf("unexpected snapshot message: %#v", snapshot)
+	}
+	peers, _ := snapshot["peers"].([]any)
+	if len(peers) != 1 {
+		t.Fatalf("unexpected snapshot peers: %#v", snapshot)
+	}
+	existing, _ := peers[0].(map[string]any)
+	existingSprite, _ := existing["sprite"].(map[string]any)
+	if existingSprite["name"] != "dino" {
+		t.Fatalf("unexpected existing sprite: %#v", snapshot)
+	}
+	if existing["state"] != "walk" {
+		t.Fatalf("snapshot should include current state: %#v", snapshot)
+	}
 	msg := readJSONFrame(t, b)
-	if msg["type"] != "peer_state" || msg["state"] != "walk" || msg["sprite_id"] != spriteA {
+	if msg["type"] != "peer_state" || msg["state"] != "walk" {
 		t.Fatalf("unexpected state message: %#v", msg)
+	}
+	stateSprite, _ := msg["sprite"].(map[string]any)
+	if stateSprite["name"] != "dino" {
+		t.Fatalf("unexpected state sprite: %#v", msg)
 	}
 	if got := readJSONFrameWithTimeout(t, c, 120*time.Millisecond); got != nil {
 		t.Fatalf("isolated room received message: %#v", got)
 	}
 }
 
-func TestWebSocketHeartbeatTimeoutRemovesPeer(t *testing.T) {
-	s, ts := newTestServer(t)
-	s.heartbeatTimeout = 180 * time.Millisecond
-	spriteA := uploadTestSprite(t, ts.URL, "device-a", "dino")["id"].(string)
-	spriteB := uploadTestSprite(t, ts.URL, "device-b", "goblin")["id"].(string)
-
-	a := dialTestWS(t, ts.URL, "device-a", spriteA, "room", "ABC")
-	defer a.Close()
-	b := dialTestWS(t, ts.URL, "device-b", spriteB, "room", "ABC")
-	defer b.Close()
-
-	_ = readJSONFrame(t, a)
-	_ = readJSONFrame(t, b)
-
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		ticker := time.NewTicker(60 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				_ = writeMaskedTextFrame(a, []byte(`{"type":"heartbeat"}`))
-			}
-		}
-	}()
-
-	deadline := time.Now().Add(1200 * time.Millisecond)
-	for {
-		left := readJSONFrameWithTimeout(t, a, time.Until(deadline))
-		if left == nil {
-			t.Fatal("expected peer_left after heartbeat timeout")
-		}
-		if left["type"] == "heartbeat" {
-			continue
-		}
-		if left["type"] != "peer_left" {
-			t.Fatalf("unexpected timeout message: %#v", left)
-		}
-		break
-	}
-}
-
-func TestPeerSpriteEndpointOnlyWorksWhilePeerIsOnline(t *testing.T) {
+func TestSpriteDetailEndpointRemainsAvailableOutsideRoomInteraction(t *testing.T) {
 	_, ts := newTestServer(t)
-	spriteA := uploadTestSprite(t, ts.URL, "device-a", "dino")["id"].(string)
-	spriteB := uploadTestSprite(t, ts.URL, "device-b", "goblin")["id"].(string)
-
-	a := dialTestWS(t, ts.URL, "device-a", spriteA, "room", "ABC")
-	defer a.Close()
-	b := dialTestWS(t, ts.URL, "device-b", spriteB, "room", "ABC")
-
-	joined := readJSONFrame(t, a)
-	peerID, _ := joined["peer_id"].(string)
-	if peerID == "" {
-		t.Fatalf("missing peer_id in joined message: %#v", joined)
-	}
-	_ = readJSONFrame(t, b)
-
-	resp, err := http.Get(ts.URL + "/api/v1/peers/" + peerID + "/sprite")
+	record := uploadTestSprite(t, ts.URL, "device-a", "dino")
+	resp, err := http.Get(ts.URL + "/api/v1/sprites/" + record["id"].(string))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("online peer sprite status=%d", resp.StatusCode)
+		t.Fatalf("sprite detail status=%d", resp.StatusCode)
 	}
+	var detail map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["name"] != "dino" {
+		t.Fatalf("unexpected sprite detail: %#v", detail)
+	}
+}
 
-	_ = b.Close()
-	_ = readJSONFrameWithTimeout(t, a, time.Second)
-
-	resp2, err := http.Get(ts.URL + "/api/v1/peers/" + peerID + "/sprite")
+func TestInviteRoomJoinDeliversExistingPeerSnapshot(t *testing.T) {
+	h := &hub{
+		rooms:         map[string]*roomState{},
+		roomByClient:  map[string]string{},
+		onlineSprites: map[string]*wsClient{},
+	}
+	first := &wsClient{id: "peer-a", mode: "room", spriteID: "sprite-a", roomCode: "LOAD", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	second := &wsClient{id: "peer-b", mode: "room", spriteID: "sprite-b", roomCode: "LOAD", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	firstDeliveries, err := h.join(first, "LOAD")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusNotFound {
-		t.Fatalf("offline peer sprite status=%d, want 404", resp2.StatusCode)
+	if len(firstDeliveries) != 1 {
+		t.Fatalf("first join deliveries=%d, want 1", len(firstDeliveries))
+	}
+	secondDeliveries, err := h.join(second, "LOAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondDeliveries) != 2 {
+		t.Fatalf("second join deliveries=%d, want 2", len(secondDeliveries))
+	}
+}
+
+func TestRandomLobbyMatchesPairsOnly(t *testing.T) {
+	h := &hub{
+		rooms:         map[string]*roomState{},
+		roomByClient:  map[string]string{},
+		waitingRandom: list.New(),
+		waitingByID:   map[string]*list.Element{},
+		onlineSprites: map[string]*wsClient{},
+	}
+	a := &wsClient{id: "a", mode: "random", spriteID: "sprite-a", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	b := &wsClient{id: "b", mode: "random", spriteID: "sprite-b", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	c := &wsClient{id: "c", mode: "random", spriteID: "sprite-c", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+
+	first, err := h.join(a, "RANDOM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 0 {
+		t.Fatalf("first random join should wait, got %#v", first)
+	}
+	second, err := h.join(b, "RANDOM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 2 {
+		t.Fatalf("second random join should create pair deliveries, got %d", len(second))
+	}
+	if a.roomCode == "" || a.roomCode != b.roomCode {
+		t.Fatalf("random pair should share one room, got a=%q b=%q", a.roomCode, b.roomCode)
+	}
+	third, err := h.join(c, "RANDOM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third) != 0 {
+		t.Fatalf("third random join should wait for another peer, got %#v", third)
+	}
+	if c.roomCode != "" {
+		t.Fatalf("waiting random peer should not be assigned a room yet")
+	}
+}
+
+func TestRandomWaitingPeerRemovalSkipsDisconnectedClient(t *testing.T) {
+	h := &hub{
+		rooms:         map[string]*roomState{},
+		roomByClient:  map[string]string{},
+		waitingRandom: list.New(),
+		waitingByID:   map[string]*list.Element{},
+		onlineSprites: map[string]*wsClient{},
+	}
+	a := &wsClient{id: "a", mode: "random", spriteID: "sprite-a", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	b := &wsClient{id: "b", mode: "random", spriteID: "sprite-b", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+	c := &wsClient{id: "c", mode: "random", spriteID: "sprite-c", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
+
+	if _, err := h.join(a, "RANDOM"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(h.waitingByID); got != 1 {
+		t.Fatalf("waiting peers=%d, want 1", got)
+	}
+
+	if deliveries := h.leave(a); len(deliveries) != 0 {
+		t.Fatalf("waiting peer leave should not deliver room messages, got %#v", deliveries)
+	}
+	if _, ok := h.waitingByID[a.id]; ok {
+		t.Fatalf("waiting peer %q should be removed from queue", a.id)
+	}
+
+	if _, err := h.join(b, "RANDOM"); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(h.waitingByID); got != 1 {
+		t.Fatalf("waiting peers after rejoin=%d, want 1", got)
+	}
+
+	deliveries, err := h.join(c, "RANDOM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 2 {
+		t.Fatalf("join after removal should still pair remaining peer, got %d deliveries", len(deliveries))
+	}
+	if b.roomCode == "" || b.roomCode != c.roomCode {
+		t.Fatalf("expected remaining peer to pair with new peer, got b=%q c=%q", b.roomCode, c.roomCode)
 	}
 }
 
@@ -336,7 +533,7 @@ func multipartUploadBody(t *testing.T, fields map[string]string, files map[strin
 	return body.Bytes(), writer.FormDataContentType()
 }
 
-func dialTestWS(t *testing.T, baseURL string, deviceID string, spriteID string, mode string, room string) net.Conn {
+func dialTestWS(t *testing.T, baseURL string, deviceID string, spriteName string, mode string, room string) net.Conn {
 	t.Helper()
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -344,7 +541,7 @@ func dialTestWS(t *testing.T, baseURL string, deviceID string, spriteID string, 
 	}
 	query := url.Values{}
 	query.Set("device_id", deviceID)
-	query.Set("sprite_id", spriteID)
+	query.Set("sprite", spriteName)
 	query.Set("mode", mode)
 	query.Set("room", room)
 	conn, err := net.Dial("tcp", u.Host)

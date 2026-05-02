@@ -303,7 +303,7 @@ def default_remote_config() -> dict:
         "enabled": False,
         "mode": "random",
         "room": "",
-        "sprite_id": "",
+        "sprite": "",
     }
 
 
@@ -317,7 +317,7 @@ def read_remote_config() -> dict:
     config["enabled"] = bool(config.get("enabled", False))
     config["mode"] = "room" if config.get("mode") == "room" else "random"
     config["room"] = str(config.get("room", "")).strip()
-    config["sprite_id"] = str(config.get("sprite_id", "")).strip()
+    config["sprite"] = normalize_sprite(config.get("sprite") or read_sprite())
     return config
 
 
@@ -625,8 +625,7 @@ def remote_upload(sprite_name: str) -> int:
         print(f"remote upload failed: {exc}", file=sys.stderr)
         return 1
     sprite_id = str(result.get("id", ""))
-    if sprite_id:
-        write_remote_config({"sprite_id": sprite_id})
+    write_remote_config({"sprite": sprite})
     print(f"uploaded sprite {sprite}; sprite_id={sprite_id or 'unknown'}")
     return 0
 
@@ -636,7 +635,7 @@ def remote_command(action: str | None, value: str | None = None) -> int:
         remote = read_remote_config()
         print(
             f"remote enabled={remote['enabled']} server={remote['server_url']} "
-            f"mode={remote['mode']} room={remote.get('room', '') or '-'} sprite_id={remote.get('sprite_id', '') or '-'}"
+            f"mode={remote['mode']} room={remote.get('room', '') or '-'} sprite={remote.get('sprite', '') or '-'}"
         )
         return 0
     if action == "on":
@@ -660,14 +659,14 @@ def remote_command(action: str | None, value: str | None = None) -> int:
             return 2
         return remote_upload(value)
     if action == "random":
-        write_remote_config({"enabled": True, "mode": "random", "room": ""})
-        print("remote random lobby enabled")
+        write_remote_config({"enabled": True, "mode": "random", "room": "", "sprite": read_sprite()})
+        print("remote random match pool enabled")
         return 0
     if action == "room":
         if not value:
             print("usage: egg_desktop.py remote room <code>", file=sys.stderr)
             return 2
-        write_remote_config({"enabled": True, "mode": "room", "room": value.strip()})
+        write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "sprite": read_sprite()})
         print(f"remote room enabled: {value.strip()}")
         return 0
     if action == "leave":
@@ -739,6 +738,28 @@ def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int, int, int]:
     if spritesheet is None:
         return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE, 1, 1
     return load_sprite_frames_from_paths(tk, spritesheet, find_metadata(spritesheet))
+
+
+def mirrored_frames(frames: list, frame_w: int, frame_h: int) -> list:
+    mirrored = []
+    for source in frames:
+        target = source.__class__(width=frame_w, height=frame_h)
+        for x in range(frame_w):
+            source.tk.call(
+                target,
+                "copy",
+                source,
+                "-from",
+                x,
+                0,
+                x + 1,
+                frame_h,
+                "-to",
+                frame_w - x - 1,
+                0,
+            )
+        mirrored.append(target)
+    return mirrored
 
 
 def frames_for_state(frames: list, sprite: str, state: str, columns: int, rows: int) -> tuple[list, bool | int]:
@@ -925,26 +946,32 @@ def read_sprite_cache_index(cache_dir: Path) -> dict:
     return read_json_file(cache_dir / "index.json")
 
 
-def cache_remote_sprite(server_url: str, peer_id: str) -> tuple[Path, Path, Path | None, str] | None:
+def cache_remote_sprite(peer_id: str, info: dict) -> tuple[Path, Path, Path | None, str] | None:
     peer_id = safe_cache_name(peer_id)
     if not peer_id:
         return None
     cache_dir = REMOTE_CACHE_DIR / peer_id
+    png_hash = safe_cache_name(str(info.get("png_hash", "")))
+    json_hash = safe_cache_name(str(info.get("json_hash", "")))
+    config_hash = safe_cache_name(str(info.get("config_hash", "")))
+    if not png_hash or not json_hash:
+        return None
     index = read_sprite_cache_index(cache_dir)
     if index:
         image = Path(str(index.get("image_path", "")))
         metadata = Path(str(index.get("metadata_path", "")))
         config_value = str(index.get("config_path", "")).strip()
         config = Path(config_value) if config_value else None
-        if image.exists() and metadata.exists() and (config is None or config.exists()):
+        if (
+            image.exists()
+            and metadata.exists()
+            and (config is None or config.exists())
+            and str(index.get("png_hash", "")) == png_hash
+            and str(index.get("json_hash", "")) == json_hash
+            and str(index.get("config_hash", "")) == config_hash
+        ):
             return image, metadata, config, str(index.get("name") or peer_id)
     try:
-        info = http_json(server_url.rstrip("/") + f"/api/v1/peers/{peer_id}/sprite")
-        png_hash = safe_cache_name(str(info.get("png_hash", "")))
-        json_hash = safe_cache_name(str(info.get("json_hash", "")))
-        config_hash = safe_cache_name(str(info.get("config_hash", "")))
-        if not png_hash or not json_hash:
-            raise ValueError("missing remote asset hashes")
         image = ensure_remote_blob(png_hash, ".png", str(info["png_url"]))
         metadata = ensure_remote_blob(json_hash, ".json", str(info["json_url"]))
         meta = json.loads(metadata.read_text(encoding="utf-8"))
@@ -996,14 +1023,13 @@ class RemoteSession:
         self.closed = False
         self.connected = False
         self.thread: threading.Thread | None = None
-        self.heartbeat_thread: threading.Thread | None = None
 
     def start(self) -> None:
         if not self.remote.get("enabled"):
             return
-        sprite_id = str(self.remote.get("sprite_id") or "").strip()
-        if not sprite_id:
-            print("remote interaction is enabled, but no sprite_id is configured; run: egg_desktop.py remote upload <sprite>", file=sys.stderr)
+        sprite = normalize_sprite(self.remote.get("sprite") or read_sprite())
+        if not sprite:
+            print("remote interaction is enabled, but no sprite is configured; run: egg_desktop.py remote upload <sprite>", file=sys.stderr)
             return
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -1013,14 +1039,12 @@ class RemoteSession:
             "device_id": self.client["device_id"],
             "mode": self.remote.get("mode", "random"),
             "room": self.remote.get("room", ""),
-            "sprite_id": self.remote.get("sprite_id", ""),
+            "sprite": normalize_sprite(self.remote.get("sprite") or read_sprite()),
         }
         url = websocket_url(self.remote["server_url"], query)
         try:
             self.ws = SimpleWebSocket(url)
             self.connected = True
-            self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-            self.heartbeat_thread.start()
             while not self.closed:
                 self.inbox.put(self.ws.recv_json())
         except Exception as exc:
@@ -1041,13 +1065,6 @@ class RemoteSession:
         self.closed = True
         if self.ws is not None:
             self.ws.close()
-
-    def _heartbeat_loop(self) -> None:
-        while not self.closed:
-            time.sleep(4.0)
-            if self.closed:
-                return
-            self.send({"type": "heartbeat"})
 
 
 class Egg:
@@ -1089,8 +1106,17 @@ class Egg:
         self.drag_offset_y = 0
         self.dragging = False
         self.remote_session = remote_session
-        self.next_remote_pose_at = 0.0
         self.last_remote_state = ""
+
+    def ensure_companion_space(self, companion_width: int, gap: int) -> None:
+        if self.dragging:
+            return
+        max_x = max(0, self.screen_w - self.sprite_w)
+        overflow = int(self.x) + self.sprite_w + gap + companion_width - self.screen_w
+        if overflow <= 0:
+            return
+        self.x = max(0, min(max_x, self.x - overflow))
+        self.root.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
 
     def maybe_change_direction(self) -> None:
         now = time.time()
@@ -1163,7 +1189,6 @@ class Egg:
     def tick(self) -> None:
         self.update_position()
         self.draw()
-        self.send_remote_pose()
         self.root.after(FRAME_MS, self.tick)
 
     def begin_drag(self, event) -> None:
@@ -1184,25 +1209,6 @@ class Egg:
         self.vy = random.uniform(-0.2, 0.2)
         self.target_change_at = time.time() + random.uniform(4, 10)
 
-    def normalized_pose(self) -> dict:
-        return {
-            "x": min(max(self.x / max(1, self.screen_w - self.sprite_w), 0), 1),
-            "y": min(max(self.y / max(1, self.screen_h - self.sprite_h), 0), 1),
-            "facing": "right" if self.vx >= 0 else "left",
-            "dragging": self.dragging,
-        }
-
-    def send_remote_pose(self) -> None:
-        if self.remote_session is None:
-            return
-        now = time.time()
-        if now < self.next_remote_pose_at:
-            return
-        self.next_remote_pose_at = now + 0.25
-        self.remote_session.send({"type": "pose", **self.normalized_pose()})
-        if self.state != self.last_remote_state:
-            self.send_remote_state()
-
     def send_remote_state(self) -> None:
         if self.remote_session is None:
             return
@@ -1211,24 +1217,26 @@ class Egg:
 
 
 class RemoteActor:
-    def __init__(self, tk, parent, server_url: str, peer_id: str, sprite_id: str, transparent: str):
+    def __init__(self, tk, parent, peer_id: str, sprite_info: dict, transparent: str):
         self.tk = tk
         self.peer_id = peer_id
-        self.sprite_id = sprite_id
-        self.sprite = sprite_id
+        self.sprite_id = str(sprite_info.get("id", ""))
+        self.sprite = normalize_sprite(sprite_info.get("name") or self.sprite_id or DEFAULT_SPRITE)
         self.state = DEFAULT_STATE
         self.config: dict = {}
         self.frames: list = []
+        self.mirrored: list = []
         self.sprite_w = DEFAULT_SPRITE_SIZE
         self.sprite_h = DEFAULT_SPRITE_SIZE
         self.columns = 1
         self.rows = 1
         self.frame_index = 0
         self.next_frame_at = 0.0
-        self.target_x_norm = random.random()
-        self.target_y_norm = random.random()
-        self.x_norm = self.target_x_norm
-        self.y_norm = self.target_y_norm
+        self.offset_distance = random.randint(120, 220)
+        self.offset_x = self.offset_distance
+        self.offset_y = random.randint(-40, 40)
+        self.anchor_x = random.randint(120, 520)
+        self.anchor_y = random.randint(120, 520)
         self.screen_w = max(parent.winfo_screenwidth(), self.sprite_w)
         self.screen_h = max(parent.winfo_screenheight(), self.sprite_h)
         self.window = tk.Toplevel(parent)
@@ -1243,15 +1251,16 @@ class RemoteActor:
             pass
         self.canvas = tk.Canvas(self.window, width=self.sprite_w, height=self.sprite_h, bg=transparent, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
-        self.load(server_url, peer_id, sprite_id)
+        self.load(peer_id, sprite_info)
 
-    def load(self, server_url: str, peer_id: str, sprite_id: str) -> None:
-        cached = cache_remote_sprite(server_url, peer_id)
+    def load(self, peer_id: str, sprite_info: dict) -> None:
+        cached = cache_remote_sprite(peer_id, sprite_info)
         if cached is None:
             return
         image, metadata, config_path, sprite = cached
         self.sprite = normalize_sprite(sprite)
         self.frames, self.sprite_w, self.sprite_h, self.columns, self.rows = load_sprite_frames_from_paths(self.tk, image, metadata)
+        self.mirrored = mirrored_frames(self.frames, self.sprite_w, self.sprite_h) if self.frames else []
         if config_path is not None:
             self.config = read_json_file(config_path)
         self.canvas.configure(width=self.sprite_w, height=self.sprite_h)
@@ -1259,18 +1268,11 @@ class RemoteActor:
 
     @property
     def x(self) -> float:
-        return self.x_norm * max(1, self.screen_w - self.sprite_w)
+        return min(max(self.anchor_x + self.offset_x, 0), max(0, self.screen_w - self.sprite_w))
 
     @property
     def y(self) -> float:
-        return self.y_norm * max(1, self.screen_h - self.sprite_h)
-
-    def update_pose(self, msg: dict) -> None:
-        try:
-            self.target_x_norm = min(max(float(msg.get("x", self.target_x_norm)), 0), 1)
-            self.target_y_norm = min(max(float(msg.get("y", self.target_y_norm)), 0), 1)
-        except (TypeError, ValueError):
-            pass
+        return min(max(self.anchor_y + self.offset_y, 40), max(40, self.screen_h - self.sprite_h - 24))
 
     def update_state(self, msg: dict) -> None:
         state = str(msg.get("state", "")).strip()
@@ -1278,9 +1280,13 @@ class RemoteActor:
             self.state = state
             self.frame_index = 0
 
-    def tick(self) -> None:
-        self.x_norm += (self.target_x_norm - self.x_norm) * 0.18
-        self.y_norm += (self.target_y_norm - self.y_norm) * 0.18
+    def apply_presence(self, msg: dict) -> None:
+        self.update_state(msg)
+
+    def tick(self, anchor_x: float, anchor_y: float) -> None:
+        self.anchor_x = anchor_x
+        self.anchor_y = anchor_y
+        self.offset_x = self.offset_distance
         self.window.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
         self.draw()
 
@@ -1299,15 +1305,27 @@ class RemoteActor:
         )
         if not state_frames:
             return
+        display_frames = state_frames
+        if self.offset_x > 0 and self.mirrored:
+            display_frames, _ = frames_for_state_with_config(
+                self.mirrored,
+                self.sprite,
+                self.state,
+                self.columns,
+                self.rows,
+                self.config,
+            )
+            if not display_frames:
+                display_frames = state_frames
         now = time.time()
         if isinstance(loop, bool):
-            frame_position = self.frame_index % len(state_frames) if loop else min(self.frame_index, len(state_frames) - 1)
-            should_advance = loop or self.frame_index < len(state_frames) - 1
+            frame_position = self.frame_index % len(display_frames) if loop else min(self.frame_index, len(display_frames) - 1)
+            should_advance = loop or self.frame_index < len(display_frames) - 1
         else:
-            max_frames = len(state_frames) * loop
-            frame_position = self.frame_index % len(state_frames) if self.frame_index < max_frames else len(state_frames) - 1
+            max_frames = len(display_frames) * loop
+            frame_position = self.frame_index % len(display_frames) if self.frame_index < max_frames else len(display_frames) - 1
             should_advance = self.frame_index < max_frames - 1
-        self.canvas.create_image(self.sprite_w / 2, self.sprite_h / 2, image=state_frames[frame_position])
+        self.canvas.create_image(self.sprite_w / 2, self.sprite_h / 2, image=display_frames[frame_position])
         if should_advance and now >= self.next_frame_at:
             self.frame_index += 1
             self.next_frame_at = now + ANIMATION_MS / 1000
@@ -1368,7 +1386,7 @@ def run_gui() -> int:
                 str(remote.get("server_url", "")),
                 str(remote.get("mode", "")),
                 str(remote.get("room", "")),
-                str(remote.get("sprite_id", "")),
+                str(remote.get("sprite", "")),
             ]
         )
 
@@ -1403,6 +1421,13 @@ def run_gui() -> int:
     canvas.bind("<ButtonRelease-1>", egg.end_drag)
     root.geometry(f"{sprite_w}x{sprite_h}+{int(egg.x)}+{int(egg.y)}")
 
+    def ensure_remote_actor(peer_id: str, sprite_info: dict) -> RemoteActor | None:
+        actor = remote_actors.get(peer_id)
+        if actor is None and sprite_info:
+            actor = RemoteActor(tk, root, peer_id, sprite_info, transparent)
+            remote_actors[peer_id] = actor
+        return actor
+
     def process_remote_events() -> None:
         nonlocal remote_session, remote_signature
         next_signature = active_remote_signature()
@@ -1430,40 +1455,60 @@ def run_gui() -> int:
                     break
             root.after(FRAME_MS, process_remote_events)
             return
-        server_url = remote["server_url"]
         while True:
             try:
                 msg = remote_inbox.get_nowait()
             except queue.Empty:
                 break
+            msg_type = msg.get("type")
+            if msg_type == "room_snapshot":
+                seen_peer_ids: set[str] = set()
+                for peer in msg.get("peers", []):
+                    if not isinstance(peer, dict):
+                        continue
+                    peer_id = str(peer.get("peer_id", ""))
+                    sprite_info = peer.get("sprite")
+                    if not peer_id or not isinstance(sprite_info, dict):
+                        continue
+                    seen_peer_ids.add(peer_id)
+                    actor = ensure_remote_actor(peer_id, sprite_info)
+                    if actor is not None:
+                        actor.apply_presence(peer)
+                stale_peer_ids = [peer_id for peer_id in remote_actors.keys() if peer_id not in seen_peer_ids]
+                for peer_id in stale_peer_ids:
+                    actor = remote_actors.pop(peer_id, None)
+                    if actor is not None:
+                        actor.destroy()
+                continue
             peer_id = str(msg.get("peer_id", ""))
             if not peer_id:
                 continue
-            msg_type = msg.get("type")
             if msg_type == "peer_left":
                 actor = remote_actors.pop(peer_id, None)
                 if actor is not None:
                     actor.destroy()
                 continue
-            sprite_id = str(msg.get("sprite_id", ""))
-            if msg_type == "peer_joined" and sprite_id:
-                if peer_id not in remote_actors:
-                    remote_actors[peer_id] = RemoteActor(tk, root, server_url, peer_id, sprite_id, transparent)
+            sprite_info = msg.get("sprite")
+            if not isinstance(sprite_info, dict):
+                sprite_info = {}
+            if msg_type == "peer_joined" and sprite_info:
+                actor = ensure_remote_actor(peer_id, sprite_info)
+                if actor is not None:
+                    actor.apply_presence(msg)
                 continue
-            actor = remote_actors.get(peer_id)
-            if actor is None and sprite_id:
-                actor = RemoteActor(tk, root, server_url, peer_id, sprite_id, transparent)
-                remote_actors[peer_id] = actor
+            actor = ensure_remote_actor(peer_id, sprite_info)
             if actor is None:
                 continue
-            if msg_type == "peer_pose":
-                actor.update_pose(msg)
-            elif msg_type == "peer_state":
+            if msg_type == "peer_state":
                 actor.update_state(msg)
             elif msg_type == "peer_action":
                 actor.update_state({"state": msg.get("action", actor.state)})
+        if remote_actors:
+            required_width = max(actor.sprite_w for actor in remote_actors.values())
+            required_gap = max(actor.offset_distance for actor in remote_actors.values())
+            egg.ensure_companion_space(required_width, required_gap)
         for actor in list(remote_actors.values()):
-            actor.tick()
+            actor.tick(egg.x, egg.y)
         root.after(FRAME_MS, process_remote_events)
 
     root.after(0, egg.tick)

@@ -3,8 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,23 +33,26 @@ import (
 )
 
 const (
-	maxPNGBytes             = 8 << 20
-	maxJSONBytes            = 1 << 20
-	maxConfigBytes          = 256 << 10
-	maxFrameSize            = 1024
-	maxFrameCount           = 512
-	maxGridSide             = 64
-	defaultHeartbeatTimeout = 12 * time.Second
+	maxPNGBytes    = 8 << 20
+	maxJSONBytes   = 1 << 20
+	maxConfigBytes = 256 << 10
+	maxFrameSize   = 1024
+	maxFrameCount  = 512
+	maxGridSide    = 64
+
+	deviceRetention       = 30 * 24 * time.Hour
+	deviceCleanupInterval = time.Hour
 )
 
 type server struct {
-	db               *sql.DB
-	dataDir          string
-	assetsDir        string
-	baseURL          string
-	publicByDefault  bool
-	heartbeatTimeout time.Duration
-	hub              *hub
+	db              *sql.DB
+	dataDir         string
+	assetsDir       string
+	baseURL         string
+	publicByDefault bool
+	hub             *hub
+	assetCache      *assetCache
+	deviceCleanup   *deviceCleanupState
 }
 
 type spriteRecord struct {
@@ -63,6 +68,9 @@ type spriteRecord struct {
 	JSONHash      string  `json:"json_hash"`
 	ConfigHash    *string `json:"config_hash,omitempty"`
 	CreatedAt     string  `json:"created_at"`
+	PNGPath       string  `json:"-"`
+	JSONPath      string  `json:"-"`
+	ConfigPath    string  `json:"-"`
 }
 
 type sheetMetadata struct {
@@ -75,20 +83,55 @@ type sheetMetadata struct {
 }
 
 type wsClient struct {
-	id       string
-	roomID   int64
-	roomCode string
-	deviceID string
-	spriteID string
-	conn     net.Conn
-	reader   *bufio.Reader
-	writerMu sync.Mutex
+	id        string
+	mode      string
+	roomCode  string
+	deviceID  string
+	spriteID  string
+	conn      net.Conn
+	reader    *bufio.Reader
+	sprite    spriteRecord
+	sendCh    chan []byte
+	doneCh    chan struct{}
+	stateMu   sync.RWMutex
+	state     string
+	closeOnce sync.Once
 }
 
 type hub struct {
-	mu    sync.Mutex
-	rooms map[string]map[string]*wsClient
-	byID  map[string]*wsClient
+	mu            sync.Mutex
+	rooms         map[string]*roomState
+	roomByClient  map[string]string
+	waitingRandom *list.List
+	waitingByID   map[string]*list.Element
+	onlineSprites map[string]*wsClient
+}
+
+type roomState struct {
+	first  *wsClient
+	second *wsClient
+}
+
+type delivery struct {
+	target *wsClient
+	msg    map[string]any
+	raw    []byte
+}
+
+type assetPaths struct {
+	png    string
+	json   string
+	config string
+}
+
+type assetCache struct {
+	mu   sync.RWMutex
+	byID map[string]assetPaths
+}
+
+type deviceCleanupState struct {
+	mu         sync.Mutex
+	lastRunUTC time.Time
 }
 
 func main() {
@@ -105,15 +148,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
+	configureDB(db)
 	s := &server{
-		db:               db,
-		dataDir:          *dataDir,
-		assetsDir:        filepath.Join(*dataDir, "assets"),
-		baseURL:          strings.TrimRight(*baseURL, "/"),
-		publicByDefault:  *publicByDefault,
-		heartbeatTimeout: defaultHeartbeatTimeout,
-		hub:              &hub{rooms: map[string]map[string]*wsClient{}, byID: map[string]*wsClient{}},
+		db:              db,
+		dataDir:         *dataDir,
+		assetsDir:       filepath.Join(*dataDir, "assets"),
+		baseURL:         strings.TrimRight(*baseURL, "/"),
+		publicByDefault: *publicByDefault,
+		hub: &hub{
+			rooms:         map[string]*roomState{},
+			roomByClient:  map[string]string{},
+			waitingRandom: list.New(),
+			waitingByID:   map[string]*list.Element{},
+			onlineSprites: map[string]*wsClient{},
+		},
+		assetCache:    &assetCache{byID: map[string]assetPaths{}},
+		deviceCleanup: &deviceCleanupState{},
 	}
 	if err := s.migrate(); err != nil {
 		log.Fatal(err)
@@ -122,7 +172,6 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/sprites", s.handleSprites)
 	mux.HandleFunc("/api/v1/sprites/", s.handleSprite)
-	mux.HandleFunc("/api/v1/peers/", s.handlePeerSprite)
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +180,24 @@ func main() {
 
 	log.Printf("eggs server listening on %s, data=%s", *addr, *dataDir)
 	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+func configureDB(db *sql.DB) {
+	maxConns := min(max(runtime.NumCPU(), 4), 16)
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns)
+	db.SetConnMaxLifetime(0)
+	for _, stmt := range []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA synchronous=NORMAL`,
+		`PRAGMA temp_store=MEMORY`,
+		`PRAGMA foreign_keys=ON`,
+		`PRAGMA busy_timeout=5000`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("warning: failed to apply %q: %v", stmt, err)
+		}
+	}
 }
 
 func (s *server) migrate() error {
@@ -154,19 +221,14 @@ func (s *server) migrate() error {
 			config_hash TEXT,
 			created_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS rooms (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			code TEXT NOT NULL UNIQUE,
-			mode TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS sessions (
-			id TEXT PRIMARY KEY,
-			room_id INTEGER NOT NULL,
-			device_id TEXT NOT NULL,
-			sprite_id TEXT NOT NULL,
-			last_seen_at TEXT NOT NULL
-		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sprites_owner_name_created_at
+			ON sprites(owner_device_id, name, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sprites_owner_name_hashes
+			ON sprites(owner_device_id, name, png_hash, json_hash, config_hash, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sprites_status_created_at
+			ON sprites(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sprites_status_id
+			ON sprites(status, id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -276,9 +338,7 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO devices(id, created_at, last_seen_at)
-		VALUES(?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at`, deviceID, now, now); err != nil {
+	if err := upsertDevice(r.Context(), tx, deviceID, now); err != nil {
 		http.Error(w, "could not upsert device", http.StatusInternalServerError)
 		return
 	}
@@ -292,6 +352,7 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "could not commit upload", http.StatusInternalServerError)
 			return
 		}
+		s.maybeCleanupDevices(context.Background())
 		record, _ := s.spriteByID(r.Context(), existingID, r)
 		writeJSON(w, http.StatusOK, record)
 		return
@@ -329,6 +390,8 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not commit upload", http.StatusInternalServerError)
 		return
 	}
+	s.assetCacheStore(id, assetPaths{png: pngPath, json: jsonPath, config: configPath})
+	s.maybeCleanupDevices(context.Background())
 	record, _ := s.spriteByID(r.Context(), id, r)
 	writeJSON(w, http.StatusCreated, record)
 }
@@ -340,27 +403,88 @@ func (s *server) listSprites(w http.ResponseWriter, r *http.Request) {
 			limit = min(max(n, 1), 100)
 		}
 	}
-	order := "created_at DESC"
-	if r.URL.Query().Get("random") == "1" || r.URL.Query().Get("random") == "true" {
-		order = "random()"
+	randomOrder := r.URL.Query().Get("random") == "1" || r.URL.Query().Get("random") == "true"
+	var (
+		records []spriteRecord
+		err     error
+	)
+	if randomOrder {
+		records, err = s.randomPublicSprites(r.Context(), limit, s.requestBaseURL(r))
+	} else {
+		records, err = s.latestPublicSprites(r.Context(), limit, s.requestBaseURL(r))
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
-		FROM sprites WHERE status='public' ORDER BY `+order+` LIMIT ?`, limit)
 	if err != nil {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"sprites": records})
+}
+
+func (s *server) latestPublicSprites(ctx context.Context, limit int, baseURL string) ([]spriteRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+		FROM sprites
+		WHERE status='public'
+		ORDER BY created_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
+	return scanSprites(rows, baseURL)
+}
+
+func (s *server) randomPublicSprites(ctx context.Context, limit int, baseURL string) ([]spriteRecord, error) {
+	cursor := randomID()
+	records, err := s.publicSpritesFromCursor(ctx, cursor, limit, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) >= limit {
+		return records, nil
+	}
+	more, err := s.publicSpritesBeforeCursor(ctx, cursor, limit-len(records), baseURL)
+	if err != nil {
+		return nil, err
+	}
+	return append(records, more...), nil
+}
+
+func (s *server) publicSpritesFromCursor(ctx context.Context, cursor string, limit int, baseURL string) ([]spriteRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+		FROM sprites
+		WHERE status='public' AND id >= ?
+		ORDER BY id
+		LIMIT ?`, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSprites(rows, baseURL)
+}
+
+func (s *server) publicSpritesBeforeCursor(ctx context.Context, cursor string, limit int, baseURL string) ([]spriteRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+		FROM sprites
+		WHERE status='public' AND id < ?
+		ORDER BY id
+		LIMIT ?`, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSprites(rows, baseURL)
+}
+
+func scanSprites(rows *sql.Rows, baseURL string) ([]spriteRecord, error) {
 	var records []spriteRecord
 	for rows.Next() {
-		record, err := scanSprite(rows, s.requestBaseURL(r))
+		record, err := scanSprite(rows, baseURL)
 		if err != nil {
-			http.Error(w, "could not read sprite", http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		records = append(records, record)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sprites": records})
+	return records, rows.Err()
 }
 
 func (s *server) handleSprite(w http.ResponseWriter, r *http.Request) {
@@ -403,51 +527,39 @@ func (s *server) handleAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := filepath.Join(s.assetsDir, id, name)
+	path := ""
+	if paths, ok := s.assetCacheLookup(id); ok {
+		path = paths.pathFor(name)
+	} else {
+		record, err := s.loadSpriteRecord(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "database unavailable", http.StatusInternalServerError)
+			return
+		}
+		path = assetPaths{
+			png:    record.PNGPath,
+			json:   record.JSONPath,
+			config: record.ConfigPath,
+		}.pathFor(name)
+	}
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
 	http.ServeFile(w, r, path)
-}
-
-func (s *server) handlePeerSprite(w http.ResponseWriter, r *http.Request) {
-	addCORS(w)
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/peers/")
-	if !strings.HasSuffix(path, "/sprite") {
-		http.NotFound(w, r)
-		return
-	}
-	peerID := safeID(strings.TrimSuffix(path, "/sprite"))
-	peerID = strings.TrimSuffix(peerID, "/")
-	if peerID == "" {
-		http.NotFound(w, r)
-		return
-	}
-	peer := s.hub.clientByID(peerID)
-	if peer == nil {
-		http.NotFound(w, r)
-		return
-	}
-	record, err := s.spriteByID(r.Context(), peer.spriteID, r)
-	if errors.Is(err, sql.ErrNoRows) {
-		http.NotFound(w, r)
-		return
-	}
-	if err != nil {
-		http.Error(w, "database unavailable", http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, record)
 }
 
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	deviceID := safeID(r.URL.Query().Get("device_id"))
-	spriteID := safeID(r.URL.Query().Get("sprite_id"))
+	spriteName := safeName(r.URL.Query().Get("sprite"))
 	mode := r.URL.Query().Get("mode")
 	roomCode := strings.ToUpper(safeName(r.URL.Query().Get("room")))
-	if deviceID == "" || spriteID == "" {
-		http.Error(w, "device_id and sprite_id are required", http.StatusBadRequest)
+	if deviceID == "" || spriteName == "" {
+		http.Error(w, "device_id and sprite are required", http.StatusBadRequest)
 		return
 	}
 	if mode != "room" {
@@ -457,9 +569,13 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "room code is required for room mode", http.StatusBadRequest)
 		return
 	}
-	roomID, err := s.ensureRoom(r.Context(), roomCode, mode)
+	spriteRecord, err := s.loadSpriteByOwnerAndName(r.Context(), deviceID, spriteName)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "unknown sprite for device", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
-		http.Error(w, "could not create room", http.StatusInternalServerError)
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
 	conn, reader, err := acceptWebSocket(w, r)
@@ -468,37 +584,36 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	client := &wsClient{
 		id:       randomID(),
-		roomID:   roomID,
+		mode:     mode,
 		roomCode: roomCode,
 		deviceID: deviceID,
-		spriteID: spriteID,
+		spriteID: spriteRecord.ID,
 		conn:     conn,
 		reader:   reader,
+		sprite:   spriteRecord.withBaseURL(s.requestBaseURL(r)),
+		sendCh:   make(chan []byte, 64),
+		doneCh:   make(chan struct{}),
+		state:    "hatched",
 	}
-	if s.heartbeatTimeout <= 0 {
-		s.heartbeatTimeout = defaultHeartbeatTimeout
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(s.heartbeatTimeout))
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = s.db.ExecContext(context.Background(), `INSERT INTO devices(id, created_at, last_seen_at)
-		VALUES(?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at`, deviceID, now, now)
-	_, _ = s.db.ExecContext(context.Background(), `INSERT INTO sessions(id, room_id, device_id, sprite_id, last_seen_at)
-		VALUES(?, ?, ?, ?, ?)`, client.id, roomID, deviceID, spriteID, now)
-
-	existing := s.hub.join(client)
-	for _, peer := range existing {
-		_ = client.writeJSON(map[string]any{"type": "peer_joined", "peer_id": peer.id, "device_id": peer.deviceID, "sprite_id": peer.spriteID})
+	if err := upsertDevice(context.Background(), s.db, deviceID, now); err == nil {
+		s.maybeCleanupDevices(context.Background())
 	}
-	s.hub.broadcast(client, map[string]any{"type": "peer_joined", "peer_id": client.id, "device_id": deviceID, "sprite_id": spriteID})
-	log.Printf("ws joined room=%s client=%s device=%s sprite=%s", roomCode, client.id, deviceID, spriteID)
+
+	deliveries, err := s.hub.join(client, roomCode)
+	if err != nil {
+		_ = conn.Close()
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	go client.writeLoop()
+	sendDeliveries(deliveries)
+	log.Printf("ws joined mode=%s room=%s client=%s device=%s sprite=%s", mode, roomCode, client.id, deviceID, spriteRecord.Name)
 
 	defer func() {
-		s.hub.leave(client)
-		_, _ = s.db.ExecContext(context.Background(), `DELETE FROM sessions WHERE id=?`, client.id)
-		_ = conn.Close()
-		s.hub.broadcast(client, map[string]any{"type": "peer_left", "peer_id": client.id})
-		log.Printf("ws left room=%s client=%s", roomCode, client.id)
+		sendDeliveries(s.hub.leave(client))
+		client.close()
+		log.Printf("ws left mode=%s room=%s client=%s", mode, roomCode, client.id)
 	}()
 
 	for {
@@ -510,44 +625,61 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(payload, &msg); err != nil {
 			continue
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(s.heartbeatTimeout))
 		t, _ := msg["type"].(string)
-		_, _ = s.db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), client.id)
-		if t == "heartbeat" {
-			_ = client.writeJSON(map[string]any{"type": "heartbeat", "at": time.Now().UTC().Format(time.RFC3339)})
-			continue
-		}
 		outType := map[string]string{
-			"pose":   "peer_pose",
 			"state":  "peer_state",
 			"action": "peer_action",
 		}[t]
 		if outType == "" {
 			continue
 		}
+		client.applyIncomingMessage(t, msg)
 		msg["type"] = outType
 		msg["peer_id"] = client.id
 		msg["device_id"] = client.deviceID
-		msg["sprite_id"] = client.spriteID
-		s.hub.broadcast(client, msg)
+		client.appendPresence(msg)
+		sendDeliveries(s.hub.broadcast(client, msg))
 	}
-}
-
-func (s *server) ensureRoom(ctx context.Context, code string, mode string) (int64, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO rooms(code, mode, created_at) VALUES(?, ?, ?)
-		ON CONFLICT(code) DO NOTHING`, code, mode, now)
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	err = s.db.QueryRowContext(ctx, `SELECT id FROM rooms WHERE code=?`, code).Scan(&id)
-	return id, err
 }
 
 func (s *server) spriteByID(ctx context.Context, id string, r *http.Request) (spriteRecord, error) {
+	record, err := s.loadSpriteRecord(ctx, id)
+	if err != nil {
+		return record, err
+	}
+	return record.withBaseURL(s.requestBaseURL(r)), nil
+}
+
+func (s *server) loadSpriteRecord(ctx context.Context, id string) (spriteRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at FROM sprites WHERE id=?`, id)
-	return scanSprite(row, s.requestBaseURL(r))
+	record, err := scanSprite(row, "")
+	if err != nil {
+		return record, err
+	}
+	s.assetCacheStore(record.ID, assetPaths{
+		png:    record.PNGPath,
+		json:   record.JSONPath,
+		config: record.ConfigPath,
+	})
+	return record, nil
+}
+
+func (s *server) loadSpriteByOwnerAndName(ctx context.Context, deviceID string, spriteName string) (spriteRecord, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+		FROM sprites
+		WHERE owner_device_id=? AND name=?
+		ORDER BY created_at DESC
+		LIMIT 1`, deviceID, spriteName)
+	record, err := scanSprite(row, "")
+	if err != nil {
+		return record, err
+	}
+	s.assetCacheStore(record.ID, assetPaths{
+		png:    record.PNGPath,
+		json:   record.JSONPath,
+		config: record.ConfigPath,
+	})
+	return record, nil
 }
 
 func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (spriteRecord, error) {
@@ -558,9 +690,12 @@ func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (sprite
 	if err := scanner.Scan(&rec.ID, &rec.OwnerDeviceID, &rec.Name, &rec.DisplayName, &rec.Status, &pngPath, &jsonPath, &configPath, &rec.PNGHash, &rec.JSONHash, &configHash, &rec.CreatedAt); err != nil {
 		return rec, err
 	}
+	rec.PNGPath = pngPath
+	rec.JSONPath = jsonPath
 	rec.PNGURL = baseURL + "/assets/" + rec.ID + "/sprite.png"
 	rec.JSONURL = baseURL + "/assets/" + rec.ID + "/sprite.json"
 	if configPath.Valid && configPath.String != "" {
+		rec.ConfigPath = configPath.String
 		u := baseURL + "/assets/" + rec.ID + "/config.json"
 		rec.ConfigURL = &u
 	}
@@ -569,6 +704,41 @@ func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (sprite
 		rec.ConfigHash = &hash
 	}
 	return rec, nil
+}
+
+func (r spriteRecord) withBaseURL(baseURL string) spriteRecord {
+	out := r
+	out.PNGURL = baseURL + "/assets/" + r.ID + "/sprite.png"
+	out.JSONURL = baseURL + "/assets/" + r.ID + "/sprite.json"
+	if r.ConfigHash != nil {
+		u := baseURL + "/assets/" + r.ID + "/config.json"
+		out.ConfigURL = &u
+	} else {
+		out.ConfigURL = nil
+	}
+	return out
+}
+
+func peerMessage(messageType string, client *wsClient) map[string]any {
+	msg := map[string]any{
+		"type":      messageType,
+		"peer_id":   client.id,
+		"device_id": client.deviceID,
+		"sprite":    client.sprite,
+	}
+	client.appendPresence(msg)
+	return msg
+}
+
+func roomSnapshotMessage(peers []*wsClient) map[string]any {
+	items := make([]map[string]any, 0, len(peers))
+	for _, peer := range peers {
+		items = append(items, peerMessage("peer", peer))
+	}
+	return map[string]any{
+		"type":  "room_snapshot",
+		"peers": items,
+	}
 }
 
 func (s *server) requestBaseURL(r *http.Request) string {
@@ -582,65 +752,325 @@ func (s *server) requestBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-func (h *hub) join(c *wsClient) []*wsClient {
+func (h *hub) join(c *wsClient, roomCode string) ([]delivery, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	room := h.rooms[c.roomCode]
-	if room == nil {
-		room = map[string]*wsClient{}
-		h.rooms[c.roomCode] = room
+	if existing := h.onlineSprites[c.spriteID]; existing != nil {
+		return nil, fmt.Errorf("sprite is already online")
 	}
-	var existing []*wsClient
-	for _, peer := range room {
-		existing = append(existing, peer)
+	h.onlineSprites[c.spriteID] = c
+	if c.mode == "room" {
+		deliveries, err := h.joinInviteRoomLocked(c, roomCode)
+		if err != nil {
+			delete(h.onlineSprites, c.spriteID)
+			return nil, err
+		}
+		return deliveries, nil
 	}
-	room[c.id] = c
-	h.byID[c.id] = c
-	return existing
+	return h.joinRandomLocked(c), nil
 }
 
-func (h *hub) leave(c *wsClient) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	room := h.rooms[c.roomCode]
+func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string) ([]delivery, error) {
+	room := h.rooms[roomCode]
 	if room == nil {
-		return
+		room = &roomState{}
+		h.rooms[roomCode] = room
 	}
-	delete(room, c.id)
-	delete(h.byID, c.id)
-	if len(room) == 0 {
-		delete(h.rooms, c.roomCode)
+	if room.full() {
+		return nil, fmt.Errorf("room is full")
 	}
+	existing := room.peers()
+	room.add(c)
+	c.roomCode = roomCode
+	h.roomByClient[c.id] = roomCode
+	deliveries := []delivery{{target: c, msg: roomSnapshotMessage(existing)}}
+	for _, peer := range existing {
+		deliveries = append(deliveries, delivery{target: peer, msg: peerMessage("peer_joined", c)})
+	}
+	return deliveries, nil
 }
 
-func (h *hub) broadcast(sender *wsClient, msg map[string]any) {
-	h.mu.Lock()
-	var peers []*wsClient
-	for _, peer := range h.rooms[sender.roomCode] {
-		if peer.id != sender.id {
-			peers = append(peers, peer)
+func (h *hub) joinRandomLocked(c *wsClient) []delivery {
+	if peer := h.dequeueWaitingRandomLocked(); peer != nil {
+		roomCode := "random-" + randomID()
+		room := &roomState{first: peer, second: c}
+		h.rooms[roomCode] = room
+		peer.roomCode = roomCode
+		c.roomCode = roomCode
+		h.roomByClient[peer.id] = roomCode
+		h.roomByClient[c.id] = roomCode
+		return []delivery{
+			{target: c, msg: roomSnapshotMessage([]*wsClient{peer})},
+			{target: peer, msg: roomSnapshotMessage([]*wsClient{c})},
 		}
 	}
+	h.enqueueWaitingRandomLocked(c)
+	c.roomCode = ""
+	delete(h.roomByClient, c.id)
+	return nil
+}
+
+func (h *hub) leave(c *wsClient) []delivery {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.onlineSprites, c.spriteID)
+	h.removeWaitingLocked(c.id)
+	roomCode := h.roomByClient[c.id]
+	if roomCode == "" {
+		delete(h.roomByClient, c.id)
+		return nil
+	}
+	room := h.rooms[roomCode]
+	if room == nil {
+		delete(h.roomByClient, c.id)
+		return nil
+	}
+	peer := room.remove(c.id)
+	delete(h.roomByClient, c.id)
+	c.roomCode = ""
+	deliveries := make([]delivery, 0, 2)
+	if peer != nil {
+		deliveries = append(deliveries, delivery{
+			target: peer,
+			msg:    map[string]any{"type": "peer_left", "peer_id": c.id},
+		})
+	}
+	if room.empty() {
+		delete(h.rooms, roomCode)
+		return deliveries
+	}
+	if c.mode != "random" {
+		return deliveries
+	}
+	survivor := room.onlyPeer()
+	delete(h.rooms, roomCode)
+	if survivor != nil {
+		delete(h.roomByClient, survivor.id)
+		survivor.roomCode = ""
+		more := h.joinRandomLocked(survivor)
+		deliveries = append(deliveries, more...)
+	}
+	return deliveries
+}
+
+func (h *hub) broadcast(sender *wsClient, msg map[string]any) []delivery {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	h.mu.Lock()
+	room := h.rooms[h.roomByClient[sender.id]]
+	peer := room.peerOf(sender.id)
 	h.mu.Unlock()
-	for _, peer := range peers {
-		_ = peer.writeJSON(msg)
+	if peer == nil {
+		return nil
+	}
+	return []delivery{{
+		target: peer,
+		raw:    data,
+	}}
+}
+
+func (h *hub) removeWaitingLocked(clientID string) {
+	if h.waitingRandom == nil || h.waitingByID == nil {
+		return
+	}
+	if elem := h.waitingByID[clientID]; elem != nil {
+		h.waitingRandom.Remove(elem)
+		delete(h.waitingByID, clientID)
 	}
 }
 
-func (h *hub) clientByID(id string) *wsClient {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.byID[id]
+func (h *hub) enqueueWaitingRandomLocked(c *wsClient) {
+	if h.waitingRandom == nil {
+		h.waitingRandom = list.New()
+	}
+	if h.waitingByID == nil {
+		h.waitingByID = map[string]*list.Element{}
+	}
+	if elem := h.waitingByID[c.id]; elem != nil {
+		elem.Value = c
+		return
+	}
+	h.waitingByID[c.id] = h.waitingRandom.PushBack(c)
 }
 
-func (c *wsClient) writeJSON(v any) error {
+func (h *hub) dequeueWaitingRandomLocked() *wsClient {
+	if h.waitingRandom == nil || h.waitingByID == nil {
+		return nil
+	}
+	for elem := h.waitingRandom.Front(); elem != nil; elem = h.waitingRandom.Front() {
+		h.waitingRandom.Remove(elem)
+		client, _ := elem.Value.(*wsClient)
+		if client != nil {
+			delete(h.waitingByID, client.id)
+			return client
+		}
+	}
+	return nil
+}
+
+func (r *roomState) full() bool {
+	return r != nil && r.first != nil && r.second != nil
+}
+
+func (r *roomState) empty() bool {
+	return r == nil || (r.first == nil && r.second == nil)
+}
+
+func (r *roomState) add(c *wsClient) {
+	if r == nil || c == nil {
+		return
+	}
+	if r.first == nil {
+		r.first = c
+		return
+	}
+	if r.second == nil {
+		r.second = c
+	}
+}
+
+func (r *roomState) peers() []*wsClient {
+	if r == nil {
+		return nil
+	}
+	peers := make([]*wsClient, 0, 2)
+	if r.first != nil {
+		peers = append(peers, r.first)
+	}
+	if r.second != nil {
+		peers = append(peers, r.second)
+	}
+	return peers
+}
+
+func (r *roomState) peerOf(clientID string) *wsClient {
+	if r == nil {
+		return nil
+	}
+	if r.first != nil && r.first.id == clientID {
+		return r.second
+	}
+	if r.second != nil && r.second.id == clientID {
+		return r.first
+	}
+	return nil
+}
+
+func (r *roomState) remove(clientID string) *wsClient {
+	if r == nil {
+		return nil
+	}
+	if r.first != nil && r.first.id == clientID {
+		r.first = nil
+		return r.second
+	}
+	if r.second != nil && r.second.id == clientID {
+		r.second = nil
+		return r.first
+	}
+	return nil
+}
+
+func (r *roomState) onlyPeer() *wsClient {
+	if r == nil {
+		return nil
+	}
+	if r.first != nil && r.second == nil {
+		return r.first
+	}
+	if r.second != nil && r.first == nil {
+		return r.second
+	}
+	return nil
+}
+
+func (c *wsClient) enqueueJSON(v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	c.writerMu.Lock()
-	defer c.writerMu.Unlock()
-	return writeWebSocketText(c.conn, data)
+	return c.enqueue(data)
+}
+
+func sendDeliveries(items []delivery) {
+	for _, item := range items {
+		if item.target == nil {
+			continue
+		}
+		var err error
+		if item.raw != nil {
+			err = item.target.enqueue(item.raw)
+		} else {
+			err = item.target.enqueueJSON(item.msg)
+		}
+		if err != nil {
+			go item.target.close()
+		}
+	}
+}
+
+func (c *wsClient) enqueue(data []byte) error {
+	select {
+	case <-c.doneCh:
+		return errors.New("peer closed")
+	default:
+	}
+	select {
+	case c.sendCh <- data:
+		return nil
+	case <-c.doneCh:
+		return errors.New("peer closed")
+	default:
+		return errors.New("peer send queue full")
+	}
+}
+
+func (c *wsClient) close() {
+	c.closeOnce.Do(func() {
+		close(c.doneCh)
+		_ = c.conn.Close()
+	})
+}
+
+func (c *wsClient) appendPresence(msg map[string]any) {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	if c.state != "" {
+		msg["state"] = c.state
+	}
+}
+
+func (c *wsClient) applyIncomingMessage(messageType string, msg map[string]any) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	switch messageType {
+	case "state", "action":
+		if state := strings.TrimSpace(stringValue(msg["state"])); state != "" {
+			c.state = state
+		}
+		if action := strings.TrimSpace(stringValue(msg["action"])); action != "" {
+			c.state = action
+		}
+	}
+}
+
+func (c *wsClient) writeLoop() {
+	for {
+		select {
+		case <-c.doneCh:
+			return
+		case payload, ok := <-c.sendCh:
+			if !ok {
+				return
+			}
+			if err := writeWebSocketText(c.conn, payload); err != nil {
+				c.close()
+				return
+			}
+		}
+	}
 }
 
 func acceptWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.Reader, error) {
@@ -771,6 +1201,66 @@ func existingSpriteID(tx *sql.Tx, deviceID string, spriteName string, pngHash st
 	return id, err
 }
 
+func upsertDevice(ctx context.Context, execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, deviceID string, now string) error {
+	_, err := execer.ExecContext(ctx, `INSERT INTO devices(id, created_at, last_seen_at)
+		VALUES(?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at`, deviceID, now, now)
+	return err
+}
+
+func (s *server) maybeCleanupDevices(ctx context.Context) {
+	if s.deviceCleanup == nil {
+		return
+	}
+	now := time.Now().UTC()
+	s.deviceCleanup.mu.Lock()
+	if !s.deviceCleanup.lastRunUTC.IsZero() && now.Sub(s.deviceCleanup.lastRunUTC) < deviceCleanupInterval {
+		s.deviceCleanup.mu.Unlock()
+		return
+	}
+	s.deviceCleanup.lastRunUTC = now
+	s.deviceCleanup.mu.Unlock()
+
+	cutoff := now.Add(-deviceRetention).Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE last_seen_at < ?`, cutoff); err != nil {
+		log.Printf("warning: device cleanup failed: %v", err)
+	}
+}
+
+func (s *server) assetCacheLookup(id string) (assetPaths, bool) {
+	if s.assetCache == nil {
+		return assetPaths{}, false
+	}
+	s.assetCache.mu.RLock()
+	defer s.assetCache.mu.RUnlock()
+	paths, ok := s.assetCache.byID[id]
+	return paths, ok
+}
+
+func (s *server) assetCacheStore(id string, paths assetPaths) {
+	if s.assetCache == nil || id == "" {
+		return
+	}
+	s.assetCache.mu.Lock()
+	defer s.assetCache.mu.Unlock()
+	s.assetCache.byID[id] = paths
+}
+
+func (a assetPaths) pathFor(name string) string {
+	switch name {
+	case "sprite.png":
+		return a.png
+	case "sprite.json":
+		return a.json
+	case "config.json":
+		return a.config
+	default:
+		return ""
+	}
+}
+
 func readPart(form *multipart.Form, name string, limit int64) ([]byte, error) {
 	files := form.File[name]
 	if len(files) == 0 {
@@ -897,7 +1387,7 @@ func safeName(value string) string {
 
 func randomID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := crand.Read(b[:]); err != nil {
 		panic(err)
 	}
 	return hex.EncodeToString(b[:])
@@ -908,6 +1398,13 @@ func nullable(value string) any {
 		return nil
 	}
 	return value
+}
+
+func stringValue(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -40,6 +40,8 @@ python3 scripts/egg_desktop.py remote random
 python3 scripts/egg_desktop.py restart
 ```
 
+`remote random` joins a server-side waiting pool. After a match is found, the server creates a temporary private room for that pair.
+
 For invite rooms:
 
 ```bash
@@ -153,6 +155,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
 - The desktop window can be repositioned by dragging it with the mouse.
 - Remote settings are stored in `~/.codex/eggs/remote.json`, anonymous device identity in `~/.codex/eggs/client.json`, and downloaded remote peer indexes in `~/.codex/eggs/remote/<peer_id>/` with shared blob files under `~/.codex/eggs/remote/blobs/`. Remote cache never overwrites local `<sprite>.png/json`.
+- Remote upload remembers the selected sprite name, and room/random interaction uses `device_id + sprite name` for the live WebSocket session rather than resolving peers through the public sprite detail endpoint.
 - The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
 - Sprite preparation tools are bundled under `tools/`; do not rely on old root-level compiled binaries.
 

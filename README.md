@@ -143,7 +143,9 @@ cd eggs
 python3 scripts/egg_desktop.py remote upload dino
 ```
 
-Join the random lobby or an invite room:
+The uploaded sprite name is also remembered in `~/.codex/eggs/remote.json`, and room interaction uses that sprite name for the WebSocket session. The public sprite detail endpoint remains available for listing and upload management, but room interaction no longer depends on looking up `/api/v1/sprites/{sprite_id}` during peer sync.
+
+Join the random match pool or an invite room:
 
 ```bash
 cd eggs
@@ -162,6 +164,8 @@ python3 scripts/egg_desktop.py restart
 ```
 
 When remote interaction is enabled, the manager uses the Python/Tk runtime so it can display multiple local/remote actors and synchronize state over WebSocket. Local-only mode keeps the native Swift/Cocoa runtime on macOS.
+
+In `remote random` mode, the client enters a server-side waiting pool rather than a shared broadcast room. Once matched, the server places the two peers into a temporary private room used only for that pair.
 
 ## Remote Server
 
