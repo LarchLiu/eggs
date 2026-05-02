@@ -692,7 +692,9 @@ final class EggController {
         nextRemoteCheck = Date().addingTimeInterval(0.2)
         let peers = readRemotePeers()
         let ids = Set(peers.map(\.peerID))
-        for (peerID, actor) in remoteActors where !ids.contains(peerID) {
+        let stalePeerIDs = remoteActors.keys.filter { !ids.contains($0) }
+        for peerID in stalePeerIDs {
+            guard let actor = remoteActors[peerID] else { continue }
             actor.destroy()
             remoteActors.removeValue(forKey: peerID)
         }
