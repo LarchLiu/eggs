@@ -757,14 +757,22 @@ def remote_command(action: str | None, value: str | None = None) -> int:
             return 2
         return remote_upload(value)
     if action == "random":
-        write_remote_config({"enabled": True, "mode": "random", "room": "", "sprite": read_sprite()})
+        sprite = read_sprite()
+        if not ensure_remote_sprite_uploaded(sprite, quiet=True):
+            print(f"remote random match pool not enabled: could not prepare sprite {sprite} on the server", file=sys.stderr)
+            return 1
+        write_remote_config({"enabled": True, "mode": "random", "room": "", "sprite": sprite})
         print("remote random match pool enabled")
         return 0
     if action == "room":
         if not value:
             print("usage: egg_desktop.py remote room <code>", file=sys.stderr)
             return 2
-        write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "sprite": read_sprite()})
+        sprite = read_sprite()
+        if not ensure_remote_sprite_uploaded(sprite, quiet=True):
+            print(f"remote room not enabled: could not prepare sprite {sprite} on the server", file=sys.stderr)
+            return 1
+        write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "sprite": sprite})
         print(f"remote room enabled: {value.strip()}")
         return 0
     if action == "leave":
