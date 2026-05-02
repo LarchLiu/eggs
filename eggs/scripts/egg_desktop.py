@@ -27,12 +27,14 @@ from urllib import error, parse, request
 
 APP_DIR = Path(os.environ.get("EGGS_APP_DIR", Path.home() / ".codex" / "eggs")).expanduser()
 PID_FILE = APP_DIR / "egg.pid"
+REMOTE_PID_FILE = APP_DIR / "remote.pid"
 LOG_FILE = APP_DIR / "egg.log"
 STATE_FILE = APP_DIR / "state.json"
 CONFIG_FILE = APP_DIR / "config.json"
 CLIENT_FILE = APP_DIR / "client.json"
 REMOTE_FILE = APP_DIR / "remote.json"
 REMOTE_CACHE_DIR = APP_DIR / "remote"
+REMOTE_PEERS_FILE = APP_DIR / "remote-peers.json"
 BUNDLED_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 SWIFT_SOURCE = Path(__file__).resolve().with_name("EggDesktop.swift")
 SWIFT_BINARY = APP_DIR / "EggDesktop"
@@ -55,6 +57,9 @@ DEFAULT_ANIMATIONS = [
 ]
 DEFAULT_STATE = "unborn"
 DEFAULT_SERVER_URL = "http://localhost:8787"
+HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; EggsDesktop/1.0; +https://eggs.larch.fun)",
+}
 
 
 def ensure_app_dir() -> None:
@@ -82,6 +87,13 @@ def ensure_default_config() -> None:
 def read_pid() -> int | None:
     try:
         return int(PID_FILE.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def read_remote_pid() -> int | None:
+    try:
+        return int(REMOTE_PID_FILE.read_text(encoding="utf-8").strip())
     except (FileNotFoundError, ValueError):
         return None
 
@@ -133,9 +145,25 @@ def process_runtime_kind(pid: int | None) -> str | None:
     return None
 
 
+def managed_remote_process_alive(pid: int | None) -> bool:
+    if not process_alive(pid):
+        return False
+    assert pid is not None
+    command = process_command(pid)
+    if command is None:
+        return False
+    script = str(Path(__file__).resolve())
+    return script in command and " remote-run" in command
+
+
 def write_pid(pid: int) -> None:
     ensure_app_dir()
     PID_FILE.write_text(f"{pid}\n", encoding="utf-8")
+
+
+def write_remote_pid(pid: int) -> None:
+    ensure_app_dir()
+    REMOTE_PID_FILE.write_text(f"{pid}\n", encoding="utf-8")
 
 
 def normalized_key(value: str) -> str:
@@ -411,8 +439,50 @@ def remote_enabled() -> bool:
 def clear_pid() -> None:
     try:
         PID_FILE.unlink()
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         pass
+
+
+def python_with_tk() -> str | None:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: str | None) -> None:
+        if not value:
+            return
+        resolved = str(Path(value).expanduser())
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        candidates.append(resolved)
+
+    preferred = os.environ.get("EGGS_PYTHON", "").strip()
+    if preferred:
+        add_candidate(preferred)
+    add_candidate(sys.executable)
+    add_candidate(shutil.which("python3"))
+    add_candidate(shutil.which("python"))
+    for extra in [
+        "/usr/bin/python3",
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/opt/homebrew/bin/python3",
+    ]:
+        add_candidate(extra if Path(extra).exists() else None)
+
+    check_code = "import tkinter"
+    for candidate in candidates:
+        try:
+            result = subprocess.run(
+                [candidate, "-c", check_code],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return candidate
+    return None
 
 
 def swift_available() -> bool:
@@ -444,11 +514,12 @@ def ensure_swift_binary() -> Path | None:
 
 
 def runtime_command() -> list[str] | None:
-    if remote_enabled():
-        return [sys.executable, str(Path(__file__).resolve()), "run"]
     swift_binary = ensure_swift_binary()
     if swift_binary is not None:
         return [str(swift_binary), str(BUNDLED_ASSETS_DIR)]
+    python_exec = python_with_tk()
+    if python_exec is not None:
+        return [python_exec, str(Path(__file__).resolve()), "run"]
     return [sys.executable, str(Path(__file__).resolve()), "run"]
 
 
@@ -476,6 +547,88 @@ def maybe_restart_for_runtime_change() -> bool:
     return True
 
 
+def clear_remote_pid() -> None:
+    try:
+        REMOTE_PID_FILE.unlink()
+    except (FileNotFoundError, PermissionError):
+        pass
+
+
+def write_remote_peers(data: dict) -> None:
+    write_json_file(REMOTE_PEERS_FILE, data)
+
+
+def remote_peer_snapshot(peer_states: dict[str, dict]) -> dict:
+    peers: list[dict] = []
+    for peer_id, peer in peer_states.items():
+        sprite_info = peer.get("sprite")
+        cached = cache_remote_sprite(peer_id, sprite_info) if isinstance(sprite_info, dict) else None
+        image_path = ""
+        metadata_path = ""
+        config_path = ""
+        sprite_name = ""
+        if cached is not None:
+            image, metadata, config, sprite_name = cached
+            image_path = str(image)
+            metadata_path = str(metadata)
+            config_path = str(config) if config is not None else ""
+        peers.append(
+            {
+                "peer_id": peer_id,
+                "state": str(peer.get("state") or peer.get("action") or ""),
+                "sprite": normalize_sprite(sprite_name or (sprite_info or {}).get("name") if isinstance(sprite_info, dict) else ""),
+                "image_path": image_path,
+                "metadata_path": metadata_path,
+                "config_path": config_path,
+            }
+        )
+    return {"enabled": True, "peers": peers}
+
+
+def start_remote_sidecar() -> int:
+    if not remote_enabled():
+        stop_remote_sidecar()
+        return 0
+    current = read_remote_pid()
+    if managed_remote_process_alive(current):
+        return 0
+    clear_remote_pid()
+    write_remote_peers({"enabled": True, "peers": []})
+    command = [sys.executable, str(Path(__file__).resolve()), "remote-run"]
+    with LOG_FILE.open("ab") as log:
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            close_fds=True,
+        )
+    write_remote_pid(proc.pid)
+    return 0
+
+
+def stop_remote_sidecar() -> int:
+    pid = read_remote_pid()
+    if not managed_remote_process_alive(pid):
+        clear_remote_pid()
+        return 0
+    assert pid is not None
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if not process_alive(pid):
+            clear_remote_pid()
+            return 0
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    clear_remote_pid()
+    return 0
+
+
 def start_background() -> int:
     ensure_default_config()
     ensure_default_remote_config()
@@ -490,7 +643,10 @@ def start_background() -> int:
 
     command = runtime_command()
     if command is None:
-        print("no usable companion runtime found", file=sys.stderr)
+        if remote_enabled():
+            print("no usable companion runtime found; remote mode requires a Python with tkinter support", file=sys.stderr)
+        else:
+            print("no usable companion runtime found", file=sys.stderr)
         return 1
 
     with LOG_FILE.open("ab") as log:
@@ -503,11 +659,13 @@ def start_background() -> int:
             close_fds=True,
         )
     write_pid(proc.pid)
+    start_remote_sidecar()
     print(f"spawned companion with pid {proc.pid}")
     return 0
 
 
 def stop_background() -> int:
+    stop_remote_sidecar()
     pid = read_pid()
     if not managed_process_alive(pid):
         clear_pid()
@@ -653,7 +811,8 @@ def multipart_body(fields: dict[str, str], files: dict[str, tuple[str, bytes, st
 
 
 def http_json(url: str, timeout: float = 10.0) -> dict:
-    with request.urlopen(url, timeout=timeout) as response:
+    req = request.Request(url, headers=HTTP_HEADERS)
+    with request.urlopen(req, timeout=timeout) as response:
         data = response.read()
     parsed = json.loads(data.decode("utf-8"))
     return parsed if isinstance(parsed, dict) else {}
@@ -754,7 +913,7 @@ def ensure_remote_sprite_uploaded(sprite_name: str, quiet: bool = False) -> bool
     req = request.Request(
         remote["server_url"] + "/api/v1/sprites",
         data=body,
-        headers={"Content-Type": content_type},
+        headers={"Content-Type": content_type, **HTTP_HEADERS},
         method="POST",
     )
     try:
@@ -784,10 +943,11 @@ def remote_upload(sprite_name: str) -> int:
 
 
 def apply_remote_runtime_change(ensure_running: bool = False) -> None:
-    if maybe_restart_for_runtime_change():
-        return
+    stop_remote_sidecar()
     if ensure_running and not managed_process_alive(read_pid()):
         start_background()
+        return
+    start_remote_sidecar()
 
 
 def remote_command(action: str | None, value: str | None = None) -> int:
@@ -910,7 +1070,15 @@ def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int, int, int]:
     spritesheet = find_spritesheet(sprite_name)
     if spritesheet is None:
         return [], DEFAULT_SPRITE_SIZE, DEFAULT_SPRITE_SIZE, 1, 1
-    return load_sprite_frames_from_paths(tk, spritesheet, find_metadata(spritesheet))
+    frames, frame_w, frame_h, cols, rows = load_sprite_frames_from_paths(tk, spritesheet, find_metadata(spritesheet))
+    if frames:
+        return frames, frame_w, frame_h, cols, rows
+
+    bundled_default = BUNDLED_ASSETS_DIR / f"{DEFAULT_SPRITE}.png"
+    if spritesheet != bundled_default and bundled_default.exists():
+        print(f"falling back to bundled sprite {bundled_default}", file=sys.stderr)
+        return load_sprite_frames_from_paths(tk, bundled_default, find_metadata(bundled_default))
+    return frames, frame_w, frame_h, cols, rows
 
 
 def mirrored_frames(frames: list, frame_w: int, frame_h: int) -> list:
@@ -1741,11 +1909,72 @@ def run_gui() -> int:
     return 0
 
 
+def run_remote_sidecar() -> int:
+    ensure_app_dir()
+    write_remote_pid(os.getpid())
+    inbox: queue.Queue = queue.Queue()
+    remote_session = RemoteSession(inbox) if remote_enabled() else None
+    if remote_session is None:
+        write_remote_peers({"enabled": False, "peers": []})
+        clear_remote_pid()
+        return 0
+    remote_session.start()
+    peer_states: dict[str, dict] = {}
+    last_sprite, last_state = read_runtime_state()
+    write_remote_peers({"enabled": True, "peers": []})
+    try:
+        while remote_enabled():
+            next_sprite, next_state = read_runtime_state()
+            if next_sprite != last_sprite:
+                last_sprite = next_sprite
+                if ensure_remote_sprite_uploaded(last_sprite, quiet=True):
+                    remote_session.send_sprite(last_sprite)
+            if next_state != last_state:
+                last_state = next_state
+                remote_session.send({"type": "state", "state": last_state, "sprite": last_sprite})
+            drained = False
+            while True:
+                try:
+                    msg = inbox.get_nowait()
+                except queue.Empty:
+                    break
+                drained = True
+                msg_type = str(msg.get("type", ""))
+                if msg_type == "room_snapshot":
+                    peer_states = {}
+                    for peer in msg.get("peers", []):
+                        if not isinstance(peer, dict):
+                            continue
+                        peer_id = str(peer.get("peer_id", "")).strip()
+                        if peer_id:
+                            peer_states[peer_id] = peer
+                    continue
+                peer_id = str(msg.get("peer_id", "")).strip()
+                if not peer_id:
+                    continue
+                if msg_type == "peer_left":
+                    peer_states.pop(peer_id, None)
+                    continue
+                if msg_type in {"peer_joined", "peer_state", "peer_action", "peer_sprite_changed"}:
+                    updated = dict(peer_states.get(peer_id, {}))
+                    updated.update(msg)
+                    peer_states[peer_id] = updated
+            if drained:
+                write_remote_peers(remote_peer_snapshot(peer_states))
+            time.sleep(0.1)
+    finally:
+        if remote_session is not None:
+            remote_session.close()
+        write_remote_peers(remote_peer_snapshot(peer_states) if remote_enabled() else {"enabled": False, "peers": []})
+        clear_remote_pid()
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage the desktop sprite companion.")
     parser.add_argument(
         "command",
-        choices=["start", "run", "stop", "restart", "status", "spritesheet", "state", "sprite", "remote"],
+        choices=["start", "run", "remote-run", "stop", "restart", "status", "spritesheet", "state", "sprite", "remote"],
     )
     parser.add_argument("path", nargs="?", help="PNG spritesheet path, sprite name, companion state, or remote action.")
     parser.add_argument("name", nargs="?", help="Optional sprite name, remote value, or room code.")
@@ -1755,6 +1984,8 @@ def main() -> int:
         return start_background()
     if args.command == "run":
         return run_gui()
+    if args.command == "remote-run":
+        return run_remote_sidecar()
     if args.command == "stop":
         return stop_background()
     if args.command == "restart":

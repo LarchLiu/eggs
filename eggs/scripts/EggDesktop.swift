@@ -9,6 +9,7 @@ let appDir = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("eggs")
 let statePath = appDir.appendingPathComponent("state.json").path
 let configPath = appDir.appendingPathComponent("config.json").path
+let remotePeersPath = appDir.appendingPathComponent("remote-peers.json").path
 let bundledAssetsPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
 let defaultAnimations = [
     "unborn",
@@ -35,6 +36,15 @@ struct AnimationSpec {
     let name: String
     let row: Int
     let loop: Any
+}
+
+struct RemotePeerSnapshot {
+    let peerID: String
+    let state: String
+    let sprite: String
+    let imagePath: String
+    let metadataPath: String?
+    let configPath: String?
 }
 
 func normalizedKey(_ value: String) -> String {
@@ -161,6 +171,33 @@ func readRuntimeState() -> RuntimeState {
     return RuntimeState(sprite: sprite, state: state)
 }
 
+func readRemotePeers() -> [RemotePeerSnapshot] {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: remotePeersPath)),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let enabled = object["enabled"] as? Bool,
+          enabled,
+          let peers = object["peers"] as? [[String: Any]] else {
+        return []
+    }
+    return peers.compactMap { item in
+        let peerID = String(describing: item["peer_id"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sprite = normalizedSprite(item["sprite"] as? String)
+        let state = normalizedState(item["state"] as? String ?? "", spriteName: sprite) ?? defaultStateForSprite(sprite)
+        let imagePath = String(describing: item["image_path"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let metadataPath = (item["metadata_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configPath = (item["config_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peerID.isEmpty, !imagePath.isEmpty else { return nil }
+        return RemotePeerSnapshot(
+            peerID: peerID,
+            state: state,
+            sprite: sprite,
+            imagePath: imagePath,
+            metadataPath: (metadataPath?.isEmpty == false) ? metadataPath : nil,
+            configPath: (configPath?.isEmpty == false) ? configPath : nil
+        )
+    }
+}
+
 func color(_ hex: UInt32) -> NSColor {
     let r = CGFloat((hex >> 16) & 0xff) / 255
     let g = CGFloat((hex >> 8) & 0xff) / 255
@@ -242,6 +279,47 @@ func loadSpriteSheetInfo(spriteName: String) -> SpriteSheetInfo? {
         columns: metadata?.columns ?? max(1, cg.width / frameWidth),
         rows: metadata?.rows ?? max(1, cg.height / frameHeight)
     )
+}
+
+func loadSpriteSheetInfo(imagePath: String, metadataPath: String?, spriteName: String) -> SpriteSheetInfo? {
+    guard let sheet = NSImage(contentsOfFile: imagePath),
+          let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        return nil
+    }
+    let fallbackWidth = min(Int(defaultSpriteSize), cg.width)
+    let fallbackHeight = min(Int(defaultSpriteSize), cg.height)
+    let metadata = metadataInfo(metadataPath)
+    let frameWidth = metadata?.width ?? fallbackWidth
+    let frameHeight = metadata?.height ?? fallbackHeight
+    return SpriteSheetInfo(
+        name: normalizedSprite(spriteName),
+        imagePath: imagePath,
+        metadataPath: metadataPath,
+        frameWidth: frameWidth,
+        frameHeight: frameHeight,
+        columns: metadata?.columns ?? max(1, cg.width / frameWidth),
+        rows: metadata?.rows ?? max(1, cg.height / frameHeight)
+    )
+}
+
+func animationSpecFromConfig(state: String, spriteName: String, configPath: String?) -> (row: Int, loop: Any) {
+    guard let configPath,
+          let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let animations = object["animations"] as? [String: Any],
+          let spriteAnimations = animations[normalizedSprite(spriteName)] as? [String: Any] else {
+        let row = defaultAnimations.map(normalizedKey).firstIndex(of: normalizedKey(state)) ?? 0
+        return (row, true)
+    }
+    let stateKey = normalizedKey(state)
+    for (name, value) in spriteAnimations {
+        guard normalizedKey(name) == stateKey, let spec = value as? [String: Any] else { continue }
+        let row = max(0, (spec["row"] as? NSNumber)?.intValue ?? 0)
+        let loop = spec["loop"] ?? true
+        return (row, loop)
+    }
+    let row = defaultAnimations.map(normalizedKey).firstIndex(of: normalizedKey(state)) ?? 0
+    return (row, true)
 }
 
 final class EggView: NSView {
@@ -389,6 +467,124 @@ final class EggView: NSView {
     }
 }
 
+final class RemoteEggView: NSView {
+    private var snapshot: RemotePeerSnapshot
+    private var spriteInfo: SpriteSheetInfo?
+    private var frames: [NSImage] = []
+    private var frameIndex = 0
+    private var nextFrameAdvance = Date()
+
+    override var isOpaque: Bool { false }
+    override var isFlipped: Bool { true }
+
+    init(frame frameRect: NSRect, snapshot: RemotePeerSnapshot) {
+        self.snapshot = snapshot
+        self.spriteInfo = loadSpriteSheetInfo(imagePath: snapshot.imagePath, metadataPath: snapshot.metadataPath, spriteName: snapshot.sprite)
+        self.frames = EggView.loadFrames(spriteInfo: self.spriteInfo)
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(snapshot: RemotePeerSnapshot) {
+        let spriteChanged = snapshot.imagePath != self.snapshot.imagePath || snapshot.metadataPath != self.snapshot.metadataPath
+        self.snapshot = snapshot
+        if spriteChanged {
+            spriteInfo = loadSpriteSheetInfo(imagePath: snapshot.imagePath, metadataPath: snapshot.metadataPath, spriteName: snapshot.sprite)
+            frames = EggView.loadFrames(spriteInfo: spriteInfo)
+            frameIndex = 0
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        bounds.fill()
+        guard !frames.isEmpty else { return }
+        let spec = animationSpecFromConfig(state: snapshot.state, spriteName: snapshot.sprite, configPath: snapshot.configPath)
+        let columns = max(1, spriteInfo?.columns ?? frames.count)
+        let rows = max(1, spriteInfo?.rows ?? 1)
+        let row = min(max(0, spec.row), rows - 1)
+        let start = row * columns
+        let end = min(start + columns, frames.count)
+        let stateFrames = start < end ? Array(frames[start..<end]) : frames
+        guard !stateFrames.isEmpty else { return }
+        let framePosition: Int
+        let shouldAdvance: Bool
+        if let loopBool = spec.loop as? Bool {
+            framePosition = loopBool ? frameIndex % stateFrames.count : min(frameIndex, stateFrames.count - 1)
+            shouldAdvance = loopBool || frameIndex < stateFrames.count - 1
+        } else if let loopNumber = spec.loop as? NSNumber {
+            let loopCount = max(1, loopNumber.intValue)
+            let maxFrames = stateFrames.count * loopCount
+            framePosition = frameIndex < maxFrames ? frameIndex % stateFrames.count : stateFrames.count - 1
+            shouldAdvance = frameIndex < maxFrames - 1
+        } else {
+            framePosition = frameIndex % stateFrames.count
+            shouldAdvance = true
+        }
+        stateFrames[framePosition].draw(in: bounds)
+        if shouldAdvance && Date() >= nextFrameAdvance {
+            frameIndex += 1
+            nextFrameAdvance = Date().addingTimeInterval(animationInterval)
+        }
+    }
+}
+
+final class RemoteEggActor {
+    let peerID: String
+    let window: NSWindow
+    let view: RemoteEggView
+    var spriteWidth: CGFloat
+    var spriteHeight: CGFloat
+    var offsetDistance: CGFloat
+    var offsetY: CGFloat
+
+    init(snapshot: RemotePeerSnapshot) {
+        peerID = snapshot.peerID
+        let spriteInfo = loadSpriteSheetInfo(imagePath: snapshot.imagePath, metadataPath: snapshot.metadataPath, spriteName: snapshot.sprite)
+        spriteWidth = CGFloat(spriteInfo?.frameWidth ?? Int(defaultSpriteSize))
+        spriteHeight = CGFloat(spriteInfo?.frameHeight ?? Int(defaultSpriteSize))
+        offsetDistance = CGFloat.random(in: 120...220)
+        offsetY = CGFloat.random(in: -40...40)
+        view = RemoteEggView(frame: NSRect(x: 0, y: 0, width: spriteWidth, height: spriteHeight), snapshot: snapshot)
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: spriteWidth, height: spriteHeight),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.level = .floating
+        window.ignoresMouseEvents = true
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        window.contentView = view
+        window.orderFrontRegardless()
+    }
+
+    func update(snapshot: RemotePeerSnapshot, anchorX: CGFloat, anchorY: CGFloat, screenFrame: NSRect) {
+        view.update(snapshot: snapshot)
+        spriteWidth = view.frame.width
+        spriteHeight = view.frame.height
+        view.setFrameSize(NSSize(width: spriteWidth, height: spriteHeight))
+        window.setContentSize(NSSize(width: spriteWidth, height: spriteHeight))
+        let x = min(max(anchorX + offsetDistance, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - spriteWidth))
+        let y = min(max(anchorY + offsetY, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    func destroy() {
+        window.orderOut(nil)
+        window.close()
+    }
+}
+
 final class EggController {
     private let window: NSWindow
     private let view: EggView
@@ -401,6 +597,8 @@ final class EggController {
     private let screenFrame: NSRect
     private var spriteWidth: CGFloat
     private var spriteHeight: CGFloat
+    private var remoteActors: [String: RemoteEggActor] = [:]
+    private var nextRemoteCheck = Date()
 
     init() {
         screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -450,6 +648,7 @@ final class EggController {
             phase += 0.16
             view.phase = phase
             view.needsDisplay = true
+            updateRemoteActors()
             return
         }
 
@@ -475,6 +674,7 @@ final class EggController {
         view.phase = phase
         view.needsDisplay = true
         window.setFrameOrigin(NSPoint(x: x, y: y))
+        updateRemoteActors()
     }
 
     private func resizeSprite(width: CGFloat, height: CGFloat) {
@@ -485,6 +685,25 @@ final class EggController {
         x = min(max(window.frame.origin.x, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - spriteWidth))
         y = min(max(window.frame.origin.y, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
         window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func updateRemoteActors() {
+        guard Date() >= nextRemoteCheck else { return }
+        nextRemoteCheck = Date().addingTimeInterval(0.2)
+        let peers = readRemotePeers()
+        let ids = Set(peers.map(\.peerID))
+        for (peerID, actor) in remoteActors where !ids.contains(peerID) {
+            actor.destroy()
+            remoteActors.removeValue(forKey: peerID)
+        }
+        for peer in peers {
+            let actor = remoteActors[peer.peerID] ?? {
+                let created = RemoteEggActor(snapshot: peer)
+                remoteActors[peer.peerID] = created
+                return created
+            }()
+            actor.update(snapshot: peer, anchorX: x, anchorY: y, screenFrame: screenFrame)
+        }
     }
 }
 
