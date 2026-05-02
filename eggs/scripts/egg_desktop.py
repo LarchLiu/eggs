@@ -593,11 +593,31 @@ def write_remote_peers(data: dict) -> None:
     write_json_file(REMOTE_PEERS_FILE, data)
 
 
+def cached_remote_sprite_from_index(peer_id: str) -> tuple[Path, Path, Path | None, str] | None:
+    peer_key = safe_cache_name(peer_id)
+    if not peer_key:
+        return None
+    index = read_sprite_cache_index(REMOTE_CACHE_DIR / peer_key)
+    if not index:
+        return None
+    image = Path(str(index.get("image_path", "")))
+    metadata = Path(str(index.get("metadata_path", "")))
+    if not image.exists() or not metadata.exists():
+        return None
+    config_value = str(index.get("config_path", "")).strip()
+    config = Path(config_value) if config_value else None
+    if config is not None and not config.exists():
+        config = None
+    return image, metadata, config, str(index.get("name") or peer_key)
+
+
 def remote_peer_snapshot(peer_states: dict[str, dict]) -> dict:
     peers: list[dict] = []
     for peer_id, peer in peer_states.items():
         sprite_info = peer.get("sprite")
         cached = cache_remote_sprite(peer_id, sprite_info) if isinstance(sprite_info, dict) else None
+        if cached is None:
+            cached = cached_remote_sprite_from_index(peer_id)
         image_path = ""
         metadata_path = ""
         config_path = ""

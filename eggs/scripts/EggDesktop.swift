@@ -4,6 +4,7 @@ import Darwin
 let defaultSpriteSize: CGFloat = 251
 let tickInterval: TimeInterval = 1.0 / 30.0
 let animationInterval: TimeInterval = 0.18
+let remotePeerGracePeriod: TimeInterval = 8.0
 let appDir = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".codex")
     .appendingPathComponent("eggs")
@@ -543,6 +544,7 @@ final class RemoteEggActor {
     var spriteHeight: CGFloat
     var offsetDistance: CGFloat
     var offsetY: CGFloat
+    private(set) var isVisible = false
 
     init(snapshot: RemotePeerSnapshot) {
         peerID = snapshot.peerID
@@ -566,6 +568,7 @@ final class RemoteEggActor {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         window.contentView = view
         window.orderFrontRegardless()
+        isVisible = true
     }
 
     func update(snapshot: RemotePeerSnapshot, anchorX: CGFloat, anchorY: CGFloat, screenFrame: NSRect) {
@@ -577,11 +580,16 @@ final class RemoteEggActor {
         let x = min(max(anchorX + offsetDistance, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - spriteWidth))
         let y = min(max(anchorY + offsetY, screenFrame.minY + 24), max(screenFrame.minY + 24, screenFrame.maxY - spriteHeight))
         window.setFrameOrigin(NSPoint(x: x, y: y))
+        if !isVisible {
+            window.orderFrontRegardless()
+            isVisible = true
+        }
     }
 
-    func destroy() {
+    func hide() {
+        guard isVisible else { return }
         window.orderOut(nil)
-        window.close()
+        isVisible = false
     }
 }
 
@@ -598,6 +606,8 @@ final class EggController {
     private var spriteWidth: CGFloat
     private var spriteHeight: CGFloat
     private var remoteActors: [String: RemoteEggActor] = [:]
+    private var hiddenRemoteActors: [String: RemoteEggActor] = [:]
+    private var remoteActorLastSeenAt: [String: Date] = [:]
     private var nextRemoteCheck = Date()
 
     init() {
@@ -690,16 +700,28 @@ final class EggController {
     private func updateRemoteActors() {
         guard Date() >= nextRemoteCheck else { return }
         nextRemoteCheck = Date().addingTimeInterval(0.2)
+        let now = Date()
         let peers = readRemotePeers()
         let ids = Set(peers.map(\.peerID))
-        let stalePeerIDs = remoteActors.keys.filter { !ids.contains($0) }
+        let stalePeerIDs = remoteActors.keys.filter {
+            guard !ids.contains($0) else { return false }
+            guard let lastSeenAt = remoteActorLastSeenAt[$0] else { return true }
+            return now.timeIntervalSince(lastSeenAt) >= remotePeerGracePeriod
+        }
         for peerID in stalePeerIDs {
             guard let actor = remoteActors[peerID] else { continue }
-            actor.destroy()
+            actor.hide()
+            hiddenRemoteActors[peerID] = actor
             remoteActors.removeValue(forKey: peerID)
+            remoteActorLastSeenAt.removeValue(forKey: peerID)
         }
         for peer in peers {
+            remoteActorLastSeenAt[peer.peerID] = now
             let actor = remoteActors[peer.peerID] ?? {
+                if let existing = hiddenRemoteActors.removeValue(forKey: peer.peerID) {
+                    remoteActors[peer.peerID] = existing
+                    return existing
+                }
                 let created = RemoteEggActor(snapshot: peer)
                 remoteActors[peer.peerID] = created
                 return created
