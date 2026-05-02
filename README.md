@@ -127,7 +127,7 @@ python3 scripts/egg_desktop.py restart
 
 ## Remote Interaction
 
-Remote interaction is opt-in and off by default. It stores anonymous client identity in `~/.codex/eggs/client.json`, remote settings in `~/.codex/eggs/remote.json`, and cached downloaded sprites under `~/.codex/eggs/remote/<sprite_id>/`.
+Remote interaction is opt-in and off by default. It stores anonymous client identity in `~/.codex/eggs/client.json`, remote settings in `~/.codex/eggs/remote.json`, and cached downloaded remote peer indexes under `~/.codex/eggs/remote/<peer_id>/` with shared blob files under `~/.codex/eggs/remote/blobs/`.
 
 Configure a server:
 

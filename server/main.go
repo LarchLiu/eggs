@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -30,21 +31,23 @@ import (
 )
 
 const (
-	maxPNGBytes    = 8 << 20
-	maxJSONBytes   = 1 << 20
-	maxConfigBytes = 256 << 10
-	maxFrameSize   = 1024
-	maxFrameCount  = 512
-	maxGridSide    = 64
+	maxPNGBytes             = 8 << 20
+	maxJSONBytes            = 1 << 20
+	maxConfigBytes          = 256 << 10
+	maxFrameSize            = 1024
+	maxFrameCount           = 512
+	maxGridSide             = 64
+	defaultHeartbeatTimeout = 12 * time.Second
 )
 
 type server struct {
-	db              *sql.DB
-	dataDir         string
-	assetsDir       string
-	baseURL         string
-	publicByDefault bool
-	hub             *hub
+	db               *sql.DB
+	dataDir          string
+	assetsDir        string
+	baseURL          string
+	publicByDefault  bool
+	heartbeatTimeout time.Duration
+	hub              *hub
 }
 
 type spriteRecord struct {
@@ -56,6 +59,9 @@ type spriteRecord struct {
 	PNGURL        string  `json:"png_url"`
 	JSONURL       string  `json:"json_url"`
 	ConfigURL     *string `json:"config_url,omitempty"`
+	PNGHash       string  `json:"png_hash"`
+	JSONHash      string  `json:"json_hash"`
+	ConfigHash    *string `json:"config_hash,omitempty"`
 	CreatedAt     string  `json:"created_at"`
 }
 
@@ -82,6 +88,7 @@ type wsClient struct {
 type hub struct {
 	mu    sync.Mutex
 	rooms map[string]map[string]*wsClient
+	byID  map[string]*wsClient
 }
 
 func main() {
@@ -100,12 +107,13 @@ func main() {
 	}
 	db.SetMaxOpenConns(1)
 	s := &server{
-		db:              db,
-		dataDir:         *dataDir,
-		assetsDir:       filepath.Join(*dataDir, "assets"),
-		baseURL:         strings.TrimRight(*baseURL, "/"),
-		publicByDefault: *publicByDefault,
-		hub:             &hub{rooms: map[string]map[string]*wsClient{}},
+		db:               db,
+		dataDir:          *dataDir,
+		assetsDir:        filepath.Join(*dataDir, "assets"),
+		baseURL:          strings.TrimRight(*baseURL, "/"),
+		publicByDefault:  *publicByDefault,
+		heartbeatTimeout: defaultHeartbeatTimeout,
+		hub:              &hub{rooms: map[string]map[string]*wsClient{}, byID: map[string]*wsClient{}},
 	}
 	if err := s.migrate(); err != nil {
 		log.Fatal(err)
@@ -114,6 +122,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/sprites", s.handleSprites)
 	mux.HandleFunc("/api/v1/sprites/", s.handleSprite)
+	mux.HandleFunc("/api/v1/peers/", s.handlePeerSprite)
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +149,9 @@ func (s *server) migrate() error {
 			png_path TEXT NOT NULL,
 			json_path TEXT NOT NULL,
 			config_path TEXT,
+			png_hash TEXT NOT NULL DEFAULT '',
+			json_hash TEXT NOT NULL DEFAULT '',
+			config_hash TEXT,
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS rooms (
@@ -158,6 +170,15 @@ func (s *server) migrate() error {
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE sprites ADD COLUMN png_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sprites ADD COLUMN json_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sprites ADD COLUMN config_hash TEXT`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
 	}
@@ -237,29 +258,11 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	id := randomID()
-	dir := filepath.Join(s.assetsDir, id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		http.Error(w, "could not store asset", http.StatusInternalServerError)
-		return
-	}
-	pngPath := filepath.Join(dir, "sprite.png")
-	jsonPath := filepath.Join(dir, "sprite.json")
-	configPath := ""
-	if err := os.WriteFile(pngPath, png, 0o644); err != nil {
-		http.Error(w, "could not store png", http.StatusInternalServerError)
-		return
-	}
-	if err := os.WriteFile(jsonPath, metaBytes, 0o644); err != nil {
-		http.Error(w, "could not store json", http.StatusInternalServerError)
-		return
-	}
+	pngHash := fileHash(png)
+	jsonHash := fileHash(metaBytes)
+	configHash := ""
 	if len(bytes.TrimSpace(configBytes)) > 0 {
-		configPath = filepath.Join(dir, "config.json")
-		if err := os.WriteFile(configPath, configBytes, 0o644); err != nil {
-			http.Error(w, "could not store config", http.StatusInternalServerError)
-			return
-		}
+		configHash = fileHash(configBytes)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -279,8 +282,46 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not upsert device", http.StatusInternalServerError)
 		return
 	}
-	if _, err := tx.Exec(`INSERT INTO sprites(id, owner_device_id, name, display_name, status, png_path, json_path, config_path, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, deviceID, spriteName, displayName, status, pngPath, jsonPath, nullable(configPath), now); err != nil {
+	existingID, err := existingSpriteID(tx, deviceID, spriteName, pngHash, jsonHash, configHash)
+	if err != nil {
+		http.Error(w, "could not query existing sprite", http.StatusInternalServerError)
+		return
+	}
+	if existingID != "" {
+		if err := tx.Commit(); err != nil {
+			http.Error(w, "could not commit upload", http.StatusInternalServerError)
+			return
+		}
+		record, _ := s.spriteByID(r.Context(), existingID, r)
+		writeJSON(w, http.StatusOK, record)
+		return
+	}
+
+	pngPath, err := ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "png"), pngHash, ".png", png)
+	if err != nil {
+		http.Error(w, "could not store png", http.StatusInternalServerError)
+		return
+	}
+	jsonPath, err := ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "json"), jsonHash, ".json", metaBytes)
+	if err != nil {
+		http.Error(w, "could not store json", http.StatusInternalServerError)
+		return
+	}
+	configPath := ""
+	if configHash != "" {
+		configPath, err = ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "config"), configHash, ".json", configBytes)
+		if err != nil {
+			http.Error(w, "could not store config", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	id := randomID()
+	if _, err := tx.Exec(`INSERT INTO sprites(
+			id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, deviceID, spriteName, displayName, status, pngPath, jsonPath, nullable(configPath), pngHash, jsonHash, nullable(configHash), now,
+	); err != nil {
 		http.Error(w, "could not insert sprite", http.StatusInternalServerError)
 		return
 	}
@@ -303,7 +344,7 @@ func (s *server) listSprites(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("random") == "1" || r.URL.Query().Get("random") == "true" {
 		order = "random()"
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, created_at
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
 		FROM sprites WHERE status='public' ORDER BY `+order+` LIMIT ?`, limit)
 	if err != nil {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
@@ -366,6 +407,40 @@ func (s *server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+func (s *server) handlePeerSprite(w http.ResponseWriter, r *http.Request) {
+	addCORS(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/peers/")
+	if !strings.HasSuffix(path, "/sprite") {
+		http.NotFound(w, r)
+		return
+	}
+	peerID := safeID(strings.TrimSuffix(path, "/sprite"))
+	peerID = strings.TrimSuffix(peerID, "/")
+	if peerID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	peer := s.hub.clientByID(peerID)
+	if peer == nil {
+		http.NotFound(w, r)
+		return
+	}
+	record, err := s.spriteByID(r.Context(), peer.spriteID, r)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	deviceID := safeID(r.URL.Query().Get("device_id"))
 	spriteID := safeID(r.URL.Query().Get("sprite_id"))
@@ -400,6 +475,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn:     conn,
 		reader:   reader,
 	}
+	if s.heartbeatTimeout <= 0 {
+		s.heartbeatTimeout = defaultHeartbeatTimeout
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(s.heartbeatTimeout))
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(context.Background(), `INSERT INTO devices(id, created_at, last_seen_at)
 		VALUES(?, ?, ?)
@@ -431,6 +510,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(payload, &msg); err != nil {
 			continue
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(s.heartbeatTimeout))
 		t, _ := msg["type"].(string)
 		_, _ = s.db.ExecContext(context.Background(), `UPDATE sessions SET last_seen_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), client.id)
 		if t == "heartbeat" {
@@ -466,7 +546,7 @@ func (s *server) ensureRoom(ctx context.Context, code string, mode string) (int6
 }
 
 func (s *server) spriteByID(ctx context.Context, id string, r *http.Request) (spriteRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, created_at FROM sprites WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at FROM sprites WHERE id=?`, id)
 	return scanSprite(row, s.requestBaseURL(r))
 }
 
@@ -474,7 +554,8 @@ func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (sprite
 	var rec spriteRecord
 	var pngPath, jsonPath string
 	var configPath sql.NullString
-	if err := scanner.Scan(&rec.ID, &rec.OwnerDeviceID, &rec.Name, &rec.DisplayName, &rec.Status, &pngPath, &jsonPath, &configPath, &rec.CreatedAt); err != nil {
+	var configHash sql.NullString
+	if err := scanner.Scan(&rec.ID, &rec.OwnerDeviceID, &rec.Name, &rec.DisplayName, &rec.Status, &pngPath, &jsonPath, &configPath, &rec.PNGHash, &rec.JSONHash, &configHash, &rec.CreatedAt); err != nil {
 		return rec, err
 	}
 	rec.PNGURL = baseURL + "/assets/" + rec.ID + "/sprite.png"
@@ -482,6 +563,10 @@ func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (sprite
 	if configPath.Valid && configPath.String != "" {
 		u := baseURL + "/assets/" + rec.ID + "/config.json"
 		rec.ConfigURL = &u
+	}
+	if configHash.Valid && configHash.String != "" {
+		hash := configHash.String
+		rec.ConfigHash = &hash
 	}
 	return rec, nil
 }
@@ -510,6 +595,7 @@ func (h *hub) join(c *wsClient) []*wsClient {
 		existing = append(existing, peer)
 	}
 	room[c.id] = c
+	h.byID[c.id] = c
 	return existing
 }
 
@@ -521,6 +607,7 @@ func (h *hub) leave(c *wsClient) {
 		return
 	}
 	delete(room, c.id)
+	delete(h.byID, c.id)
 	if len(room) == 0 {
 		delete(h.rooms, c.roomCode)
 	}
@@ -538,6 +625,12 @@ func (h *hub) broadcast(sender *wsClient, msg map[string]any) {
 	for _, peer := range peers {
 		_ = peer.writeJSON(msg)
 	}
+}
+
+func (h *hub) clientByID(id string) *wsClient {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.byID[id]
 }
 
 func (c *wsClient) writeJSON(v any) error {
@@ -659,6 +752,25 @@ func writeWebSocketText(w io.Writer, payload []byte) error {
 	return err
 }
 
+func existingSpriteID(tx *sql.Tx, deviceID string, spriteName string, pngHash string, jsonHash string, configHash string) (string, error) {
+	var id string
+	err := tx.QueryRow(
+		`SELECT id FROM sprites
+		WHERE owner_device_id = ?
+		  AND name = ?
+		  AND png_hash = ?
+		  AND json_hash = ?
+		  AND COALESCE(config_hash, '') = ?
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		deviceID, spriteName, pngHash, jsonHash, configHash,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 func readPart(form *multipart.Form, name string, limit int64) ([]byte, error) {
 	files := form.File[name]
 	if len(files) == 0 {
@@ -749,6 +861,27 @@ func validateConfig(data []byte) error {
 
 func isPNG(data []byte) bool {
 	return len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+}
+
+func fileHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func ensureBlobFile(baseDir string, hash string, suffix string, data []byte) (string, error) {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(baseDir, hash+suffix)
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 var safeRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)

@@ -906,38 +906,85 @@ def download_url(url: str, target: Path, timeout: float = 15.0) -> None:
     target.write_bytes(data)
 
 
-def cache_remote_sprite(server_url: str, sprite_id: str) -> tuple[Path, Path, Path | None, str] | None:
-    sprite_id = safe_cache_name(sprite_id)
-    if not sprite_id:
+def ensure_remote_blob(hash_value: str, suffix: str, url: str) -> Path:
+    blob_dir = REMOTE_CACHE_DIR / "blobs"
+    blob_dir.mkdir(parents=True, exist_ok=True)
+    target = blob_dir / f"{safe_cache_name(hash_value)}{suffix}"
+    if target.exists():
+        return target
+    download_url(url, target)
+    return target
+
+
+def write_sprite_cache_index(cache_dir: Path, data: dict) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "index.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def read_sprite_cache_index(cache_dir: Path) -> dict:
+    return read_json_file(cache_dir / "index.json")
+
+
+def cache_remote_sprite(server_url: str, peer_id: str) -> tuple[Path, Path, Path | None, str] | None:
+    peer_id = safe_cache_name(peer_id)
+    if not peer_id:
         return None
-    cache_dir = REMOTE_CACHE_DIR / sprite_id
-    image = cache_dir / "sprite.png"
-    metadata = cache_dir / "sprite.json"
-    config = cache_dir / "config.json"
-    if image.exists() and metadata.exists():
-        return image, metadata, config if config.exists() else None, sprite_id
+    cache_dir = REMOTE_CACHE_DIR / peer_id
+    index = read_sprite_cache_index(cache_dir)
+    if index:
+        image = Path(str(index.get("image_path", "")))
+        metadata = Path(str(index.get("metadata_path", "")))
+        config_value = str(index.get("config_path", "")).strip()
+        config = Path(config_value) if config_value else None
+        if image.exists() and metadata.exists() and (config is None or config.exists()):
+            return image, metadata, config, str(index.get("name") or peer_id)
     try:
-        info = http_json(server_url.rstrip("/") + f"/api/v1/sprites/{sprite_id}")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        download_url(str(info["png_url"]), image)
-        download_url(str(info["json_url"]), metadata)
+        info = http_json(server_url.rstrip("/") + f"/api/v1/peers/{peer_id}/sprite")
+        png_hash = safe_cache_name(str(info.get("png_hash", "")))
+        json_hash = safe_cache_name(str(info.get("json_hash", "")))
+        config_hash = safe_cache_name(str(info.get("config_hash", "")))
+        if not png_hash or not json_hash:
+            raise ValueError("missing remote asset hashes")
+        image = ensure_remote_blob(png_hash, ".png", str(info["png_url"]))
+        metadata = ensure_remote_blob(json_hash, ".json", str(info["json_url"]))
         meta = json.loads(metadata.read_text(encoding="utf-8"))
         if not validate_remote_metadata(meta):
             raise ValueError("invalid downloaded sprite metadata")
+        config: Path | None = None
         config_url = info.get("config_url")
         if config_url:
-            download_url(str(config_url), config)
+            suffix = ".json"
+            if not config_hash:
+                config_hash = file_hash_text(str(config_url))
+            config = ensure_remote_blob(config_hash, suffix, str(config_url))
             config_data = json.loads(config.read_text(encoding="utf-8"))
             if not validate_remote_config(config_data):
-                config.unlink(missing_ok=True)
-        return image, metadata, config if config.exists() else None, str(info.get("name") or sprite_id)
+                config = None
+        write_sprite_cache_index(
+            cache_dir,
+            {
+                "name": str(info.get("name") or peer_id),
+                "image_path": str(image),
+                "metadata_path": str(metadata),
+                "config_path": str(config) if config is not None and config.exists() else "",
+                "png_hash": png_hash,
+                "json_hash": json_hash,
+                "config_hash": config_hash,
+                "sprite_id": str(info.get("id") or ""),
+            },
+        )
+        return image, metadata, config if config is not None and config.exists() else None, str(info.get("name") or peer_id)
     except Exception as exc:
-        print(f"could not cache remote sprite {sprite_id}: {exc}", file=sys.stderr)
+        print(f"could not cache remote sprite for peer {peer_id}: {exc}", file=sys.stderr)
         return None
 
 
 def safe_cache_name(value: str) -> str:
     return "".join(ch for ch in value.strip() if ch.isalnum() or ch in ("-", "_"))
+
+
+def file_hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 class RemoteSession:
@@ -949,6 +996,7 @@ class RemoteSession:
         self.closed = False
         self.connected = False
         self.thread: threading.Thread | None = None
+        self.heartbeat_thread: threading.Thread | None = None
 
     def start(self) -> None:
         if not self.remote.get("enabled"):
@@ -971,6 +1019,8 @@ class RemoteSession:
         try:
             self.ws = SimpleWebSocket(url)
             self.connected = True
+            self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self.heartbeat_thread.start()
             while not self.closed:
                 self.inbox.put(self.ws.recv_json())
         except Exception as exc:
@@ -991,6 +1041,13 @@ class RemoteSession:
         self.closed = True
         if self.ws is not None:
             self.ws.close()
+
+    def _heartbeat_loop(self) -> None:
+        while not self.closed:
+            time.sleep(4.0)
+            if self.closed:
+                return
+            self.send({"type": "heartbeat"})
 
 
 class Egg:
@@ -1186,10 +1243,10 @@ class RemoteActor:
             pass
         self.canvas = tk.Canvas(self.window, width=self.sprite_w, height=self.sprite_h, bg=transparent, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
-        self.load(server_url, sprite_id)
+        self.load(server_url, peer_id, sprite_id)
 
-    def load(self, server_url: str, sprite_id: str) -> None:
-        cached = cache_remote_sprite(server_url, sprite_id)
+    def load(self, server_url: str, peer_id: str, sprite_id: str) -> None:
+        cached = cache_remote_sprite(server_url, peer_id)
         if cached is None:
             return
         image, metadata, config_path, sprite = cached

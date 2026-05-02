@@ -152,7 +152,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - Chinese state requests are supported through aliases such as `睡觉`, `吃鸡腿`, `喝水`, `玩耍`, `咆哮`, and `攻击`.
 - The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
 - The desktop window can be repositioned by dragging it with the mouse.
-- Remote settings are stored in `~/.codex/eggs/remote.json`, anonymous device identity in `~/.codex/eggs/client.json`, and downloaded remote sprites in `~/.codex/eggs/remote/<sprite_id>/`. Remote cache never overwrites local `<sprite>.png/json`.
+- Remote settings are stored in `~/.codex/eggs/remote.json`, anonymous device identity in `~/.codex/eggs/client.json`, and downloaded remote peer indexes in `~/.codex/eggs/remote/<peer_id>/` with shared blob files under `~/.codex/eggs/remote/blobs/`. Remote cache never overwrites local `<sprite>.png/json`.
 - The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
 - Sprite preparation tools are bundled under `tools/`; do not rely on old root-level compiled binaries.
 
