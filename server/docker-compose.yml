@@ -7,7 +7,7 @@ services:
     ports:
       - "${EGGS_SERVER_PORT:-8787}:8787"
     volumes:
-      - ./data:/data
+      - eggs-server-data:/data
     command:
       - -addr
       - :8787
@@ -18,3 +18,6 @@ services:
       - -public-by-default
       - ${EGGS_PUBLIC_BY_DEFAULT:-true}
     restart: unless-stopped
+
+volumes:
+  eggs-server-data:

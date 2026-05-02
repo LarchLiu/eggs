@@ -27,7 +27,7 @@ This uses:
 - [Dockerfile](/Users/alex/Work/cloudgeek/eggs/server/Dockerfile)
 - [docker-compose.yml](/Users/alex/Work/cloudgeek/eggs/server/docker-compose.yml)
 
-Persistent data is stored in [data](</Users/alex/Work/cloudgeek/eggs/server/data>) on the host and mounted to `/data` in the container.
+Persistent data is stored in the Docker named volume `eggs-server-data` and mounted to `/data` in the container. If you previously used a host bind mount like `./data:/data`, copy `eggs.db` and the `assets/` directory into the named volume before switching if you want to keep existing uploads.
 
 Useful environment overrides:
 
