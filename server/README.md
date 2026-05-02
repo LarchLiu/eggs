@@ -35,6 +35,8 @@ Useful environment overrides:
 - `EGGS_BASE_URL=http://your-host:8787`
 - `EGGS_PUBLIC_BY_DEFAULT=true`
 
+These values are explicitly passed into the container as environment variables by [docker-compose.yml](/Users/alex/Work/cloudgeek/eggs/server/docker-compose.yml), and the container command expands them when starting `eggs-server`. A `server/.env` file works well for persistent deployments.
+
 Example:
 
 ```bash

@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from urllib import parse, request
+from urllib import error, parse, request
 
 
 APP_DIR = Path(os.environ.get("EGGS_APP_DIR", Path.home() / ".codex" / "eggs")).expanduser()
@@ -113,13 +113,24 @@ def managed_process_alive(pid: int | None) -> bool:
     if not process_alive(pid):
         return False
     assert pid is not None
+    return process_runtime_kind(pid) is not None
+
+
+def process_runtime_kind(pid: int | None) -> str | None:
+    if not process_alive(pid):
+        return None
+    assert pid is not None
     command = process_command(pid)
     if command is None:
-        return False
+        return None
 
     script = str(Path(__file__).resolve())
     swift_binary = str(SWIFT_BINARY)
-    return swift_binary in command or (script in command and " run" in command)
+    if swift_binary in command:
+        return "swift"
+    if script in command and " run" in command:
+        return "python"
+    return None
 
 
 def write_pid(pid: int) -> None:
@@ -441,12 +452,38 @@ def runtime_command() -> list[str] | None:
     return [sys.executable, str(Path(__file__).resolve()), "run"]
 
 
+def desired_runtime_kind() -> str | None:
+    command = runtime_command()
+    if not command:
+        return None
+    if len(command) >= 3 and command[1] == str(Path(__file__).resolve()) and command[2] == "run":
+        return "python"
+    if command[0] == str(SWIFT_BINARY):
+        return "swift"
+    return None
+
+
+def maybe_restart_for_runtime_change() -> bool:
+    current = read_pid()
+    if not managed_process_alive(current):
+        return False
+    current_kind = process_runtime_kind(current)
+    wanted_kind = desired_runtime_kind()
+    if current_kind is None or wanted_kind is None or current_kind == wanted_kind:
+        return False
+    stop_background()
+    start_background()
+    return True
+
+
 def start_background() -> int:
     ensure_default_config()
     ensure_default_remote_config()
     ensure_default_state()
     current = read_pid()
     if managed_process_alive(current):
+        if maybe_restart_for_runtime_change():
+            return 0
         print(f"companion already running with pid {current}")
         return 0
     clear_pid()
@@ -663,6 +700,15 @@ def remote_sprite_record(sprite_name: str) -> dict | None:
     url = remote["server_url"] + "/api/v1/sprites?" + query
     try:
         result = http_json(url, timeout=10.0)
+    except error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace").strip()
+        except Exception:
+            body = ""
+        detail = f": {body}" if body else ""
+        print(f"remote sprite lookup failed: HTTP {exc.code} {exc.reason}{detail}", file=sys.stderr)
+        return None
     except Exception:
         return None
     sprite_record = result.get("sprite")
@@ -714,6 +760,15 @@ def ensure_remote_sprite_uploaded(sprite_name: str, quiet: bool = False) -> bool
     try:
         with request.urlopen(req, timeout=20) as response:
             result = json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace").strip()
+        except Exception:
+            body = ""
+        detail = f": {body}" if body else ""
+        print(f"remote upload failed: HTTP {exc.code} {exc.reason}{detail}", file=sys.stderr)
+        return False
     except Exception as exc:
         print(f"remote upload failed: {exc}", file=sys.stderr)
         return False
@@ -728,6 +783,13 @@ def remote_upload(sprite_name: str) -> int:
     return 0 if ensure_remote_sprite_uploaded(sprite_name) else 1
 
 
+def apply_remote_runtime_change(ensure_running: bool = False) -> None:
+    if maybe_restart_for_runtime_change():
+        return
+    if ensure_running and not managed_process_alive(read_pid()):
+        start_background()
+
+
 def remote_command(action: str | None, value: str | None = None) -> int:
     if not action:
         remote = read_remote_config()
@@ -738,10 +800,12 @@ def remote_command(action: str | None, value: str | None = None) -> int:
         return 0
     if action == "on":
         write_remote_config({"enabled": True})
+        apply_remote_runtime_change()
         print("remote interaction enabled")
         return 0
     if action == "off":
         write_remote_config({"enabled": False})
+        apply_remote_runtime_change()
         print("remote interaction disabled")
         return 0
     if action == "server":
@@ -762,6 +826,7 @@ def remote_command(action: str | None, value: str | None = None) -> int:
             print(f"remote random match pool not enabled: could not prepare sprite {sprite} on the server", file=sys.stderr)
             return 1
         write_remote_config({"enabled": True, "mode": "random", "room": "", "sprite": sprite})
+        apply_remote_runtime_change(ensure_running=True)
         print("remote random match pool enabled")
         return 0
     if action == "room":
@@ -773,10 +838,12 @@ def remote_command(action: str | None, value: str | None = None) -> int:
             print(f"remote room not enabled: could not prepare sprite {sprite} on the server", file=sys.stderr)
             return 1
         write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "sprite": sprite})
+        apply_remote_runtime_change(ensure_running=True)
         print(f"remote room enabled: {value.strip()}")
         return 0
     if action == "leave":
         write_remote_config({"enabled": False, "mode": "random", "room": ""})
+        apply_remote_runtime_change()
         print("left remote interaction")
         return 0
     print(f"unknown remote action '{action}'", file=sys.stderr)

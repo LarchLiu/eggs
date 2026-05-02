@@ -4,19 +4,17 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: eggs-server
+    environment:
+      EGGS_BASE_URL: ${EGGS_BASE_URL:-http://localhost:8787}
+      EGGS_PUBLIC_BY_DEFAULT: ${EGGS_PUBLIC_BY_DEFAULT:-true}
     ports:
       - "${EGGS_SERVER_PORT:-8787}:8787"
     volumes:
       - eggs-server-data:/data
     command:
-      - -addr
-      - :8787
-      - -data
-      - /data
-      - -base-url
-      - ${EGGS_BASE_URL:-http://localhost:8787}
-      - -public-by-default
-      - ${EGGS_PUBLIC_BY_DEFAULT:-true}
+      - /bin/sh
+      - -lc
+      - exec eggs-server -addr :8787 -data /data -base-url "$EGGS_BASE_URL" -public-by-default "$EGGS_PUBLIC_BY_DEFAULT"
     restart: unless-stopped
 
 volumes:
