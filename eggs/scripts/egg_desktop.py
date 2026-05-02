@@ -61,6 +61,24 @@ def ensure_app_dir() -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def default_config() -> dict:
+    return {
+        "animations": {
+            DEFAULT_SPRITE: {
+                name: {"row": index, "loop": True}
+                for index, name in enumerate(DEFAULT_ANIMATIONS)
+            }
+        }
+    }
+
+
+def ensure_default_config() -> None:
+    ensure_app_dir()
+    if CONFIG_FILE.exists():
+        return
+    write_json_file(CONFIG_FILE, default_config())
+
+
 def read_pid() -> int | None:
     try:
         return int(PID_FILE.read_text(encoding="utf-8").strip())
@@ -307,7 +325,15 @@ def default_remote_config() -> dict:
     }
 
 
+def ensure_default_remote_config() -> None:
+    ensure_app_dir()
+    if REMOTE_FILE.exists():
+        return
+    write_json_file(REMOTE_FILE, default_remote_config())
+
+
 def read_remote_config() -> dict:
+    ensure_default_remote_config()
     config = default_remote_config()
     config.update(read_json_file(REMOTE_FILE))
     server_url = str(config.get("server_url") or DEFAULT_SERVER_URL).rstrip("/")
@@ -327,6 +353,10 @@ def write_remote_config(config: dict) -> None:
     write_json_file(REMOTE_FILE, merged)
 
 
+def sync_remote_sprite(sprite: str) -> None:
+    write_remote_config({"sprite": normalize_sprite(sprite)})
+
+
 def set_state(value: str, sprite_name: str | None = None) -> int:
     current_sprite, _ = read_runtime_state()
     sprite = normalize_sprite(sprite_name) if sprite_name else current_sprite
@@ -341,10 +371,18 @@ def set_state(value: str, sprite_name: str | None = None) -> int:
 
 def set_sprite(value: str) -> int:
     sprite = normalize_sprite(value)
+    remote_is_enabled = remote_enabled()
+    remote_ready = True
+    if remote_is_enabled:
+        remote_ready = ensure_remote_sprite_uploaded(sprite, quiet=True)
+    else:
+        sync_remote_sprite(sprite)
     _, state = read_runtime_state()
     state = normalize_state(state, sprite) or default_state_for_sprite(sprite)
     write_runtime_state(sprite, state)
     print(f"companion sprite set to {sprite}; state={state}")
+    if remote_is_enabled and not remote_ready:
+        print("warning: remote sprite was not updated because upload/check failed; peers will stay on the previous sprite", file=sys.stderr)
     return 0
 
 
@@ -397,7 +435,8 @@ def runtime_command() -> list[str] | None:
 
 
 def start_background() -> int:
-    ensure_app_dir()
+    ensure_default_config()
+    ensure_default_remote_config()
     current = read_pid()
     if managed_process_alive(current):
         print(f"companion already running with pid {current}")
@@ -575,20 +614,24 @@ def http_json(url: str, timeout: float = 10.0) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def remote_upload(sprite_name: str) -> int:
+def file_hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def local_sprite_upload_payload(sprite_name: str) -> tuple[dict[str, tuple[str, bytes, str]], dict | None]:
     sprite = normalize_sprite(sprite_name)
     image, metadata = local_sprite_paths(sprite)
     if image is None or metadata is None:
         print(f"missing local sprite assets for {sprite}; expected <sprite>.png and <sprite>.json", file=sys.stderr)
-        return 1
+        return {}, None
     try:
         meta_data = json.loads(metadata.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"could not read sprite metadata: {exc}", file=sys.stderr)
-        return 1
+        return {}, None
     if not validate_remote_metadata(meta_data):
         print("sprite metadata is not valid for remote upload", file=sys.stderr)
-        return 1
+        return {}, None
 
     files = {
         "png": (f"{sprite}.png", image.read_bytes(), "image/png"),
@@ -601,8 +644,49 @@ def remote_upload(sprite_name: str) -> int:
                 files["config"] = ("config.json", CONFIG_FILE.read_bytes(), "application/json")
         except (OSError, json.JSONDecodeError):
             pass
+    return files, meta_data
 
+
+def remote_sprite_record(sprite_name: str) -> dict | None:
+    sprite = normalize_sprite(sprite_name)
     remote = read_remote_config()
+    client = read_client_config()
+    query = parse.urlencode({"device_id": client["device_id"], "sprite_name": sprite})
+    url = remote["server_url"] + "/api/v1/sprites?" + query
+    try:
+        result = http_json(url, timeout=10.0)
+    except Exception:
+        return None
+    sprite_record = result.get("sprite")
+    return sprite_record if isinstance(sprite_record, dict) else None
+
+
+def remote_sprite_matches_local(sprite_name: str, files: dict[str, tuple[str, bytes, str]]) -> bool:
+    record = remote_sprite_record(sprite_name)
+    if not record:
+        return False
+    png_hash = file_hash_bytes(files["png"][1])
+    json_hash = file_hash_bytes(files["json"][1])
+    config_file = files.get("config")
+    config_hash = file_hash_bytes(config_file[1]) if config_file is not None else ""
+    remote_config_hash = str(record.get("config_hash") or "")
+    return (
+        str(record.get("png_hash") or "") == png_hash
+        and str(record.get("json_hash") or "") == json_hash
+        and remote_config_hash == config_hash
+    )
+
+
+def ensure_remote_sprite_uploaded(sprite_name: str, quiet: bool = False) -> bool:
+    sprite = normalize_sprite(sprite_name)
+    files, meta_data = local_sprite_upload_payload(sprite)
+    if not files or meta_data is None:
+        return False
+    if remote_sprite_matches_local(sprite, files):
+        sync_remote_sprite(sprite)
+        if not quiet:
+            print(f"remote sprite {sprite} already up to date")
+        return True
     client = read_client_config()
     body, content_type = multipart_body(
         {
@@ -612,6 +696,7 @@ def remote_upload(sprite_name: str) -> int:
         },
         files,
     )
+    remote = read_remote_config()
     req = request.Request(
         remote["server_url"] + "/api/v1/sprites",
         data=body,
@@ -623,11 +708,16 @@ def remote_upload(sprite_name: str) -> int:
             result = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         print(f"remote upload failed: {exc}", file=sys.stderr)
-        return 1
+        return False
     sprite_id = str(result.get("id", ""))
-    write_remote_config({"sprite": sprite})
-    print(f"uploaded sprite {sprite}; sprite_id={sprite_id or 'unknown'}")
-    return 0
+    sync_remote_sprite(sprite)
+    if not quiet:
+        print(f"uploaded sprite {sprite}; sprite_id={sprite_id or 'unknown'}")
+    return True
+
+
+def remote_upload(sprite_name: str) -> int:
+    return 0 if ensure_remote_sprite_uploaded(sprite_name) else 1
 
 
 def remote_command(action: str | None, value: str | None = None) -> int:
@@ -1082,6 +1172,9 @@ class RemoteSession:
         except Exception:
             self.connected = False
 
+    def send_sprite(self, sprite: str) -> None:
+        self.send({"type": "sprite", "sprite": normalize_sprite(sprite)})
+
     def close(self) -> None:
         self.closed = True
         if self.ws is not None:
@@ -1179,6 +1272,15 @@ class Egg:
                 self.canvas.configure(width=self.sprite_w, height=self.sprite_h)
                 self.root.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
                 self.frame_index = 0
+                if self.remote_session is None:
+                    sync_remote_sprite(self.sprite)
+                elif ensure_remote_sprite_uploaded(self.sprite, quiet=True):
+                    self.send_remote_sprite()
+                else:
+                    print(
+                        "warning: remote sprite update skipped because upload/check failed; peers will stay on the previous sprite",
+                        file=sys.stderr,
+                    )
             if next_state != self.state:
                 self.state = next_state
                 self.frame_index = 0
@@ -1236,6 +1338,11 @@ class Egg:
         self.last_remote_state = self.state
         self.remote_session.send({"type": "state", "state": self.state, "sprite": self.sprite})
 
+    def send_remote_sprite(self) -> None:
+        if self.remote_session is None:
+            return
+        self.remote_session.send_sprite(self.sprite)
+
 
 class RemoteActor:
     def __init__(self, tk, parent, peer_id: str, sprite_info: dict, transparent: str):
@@ -1282,8 +1389,11 @@ class RemoteActor:
         self.sprite = normalize_sprite(sprite)
         self.frames, self.sprite_w, self.sprite_h, self.columns, self.rows = load_sprite_frames_from_paths(self.tk, image, metadata)
         self.mirrored = mirrored_frames(self.frames, self.sprite_w, self.sprite_h) if self.frames else []
+        self.config = {}
         if config_path is not None:
             self.config = read_json_file(config_path)
+        self.frame_index = 0
+        self.next_frame_at = 0.0
         self.canvas.configure(width=self.sprite_w, height=self.sprite_h)
         self.window.geometry(f"{self.sprite_w}x{self.sprite_h}+{int(self.x)}+{int(self.y)}")
 
@@ -1407,7 +1517,6 @@ def run_gui() -> int:
                 str(remote.get("server_url", "")),
                 str(remote.get("mode", "")),
                 str(remote.get("room", "")),
-                str(remote.get("sprite", "")),
             ]
         )
 
@@ -1519,6 +1628,11 @@ def run_gui() -> int:
                 continue
             actor = ensure_remote_actor(peer_id, sprite_info)
             if actor is None:
+                continue
+            if msg_type == "peer_sprite_changed":
+                if sprite_info:
+                    actor.load(peer_id, sprite_info)
+                actor.apply_presence(msg)
                 continue
             if msg_type == "peer_state":
                 actor.update_state(msg)

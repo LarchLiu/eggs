@@ -143,7 +143,7 @@ cd eggs
 python3 scripts/egg_desktop.py remote upload dino
 ```
 
-The uploaded sprite name is also remembered in `~/.codex/eggs/remote.json`, and room interaction uses that sprite name for the WebSocket session. The public sprite detail endpoint remains available for listing and upload management, but room interaction no longer depends on looking up `/api/v1/sprites/{sprite_id}` during peer sync.
+The uploaded sprite name is also remembered in `~/.codex/eggs/remote.json`, and room interaction uses that sprite name for the WebSocket session. Before uploading, the client now checks the owner's latest `device_id + sprite_name` record on the server and skips the upload when the remote PNG/JSON/config hashes already match the local files. The public sprite detail endpoint remains available for listing and upload management, but room interaction no longer depends on looking up `/api/v1/sprites/{sprite_id}` during peer sync.
 
 Join the random match pool or an invite room:
 
@@ -164,6 +164,8 @@ python3 scripts/egg_desktop.py restart
 ```
 
 When remote interaction is enabled, the manager uses the Python/Tk runtime so it can display multiple local/remote actors and synchronize state over WebSocket. Local-only mode keeps the native Swift/Cocoa runtime on macOS.
+
+When remote interaction is enabled and you run `python3 scripts/egg_desktop.py sprite <name>`, the client tries to ensure that sprite already exists on the server with matching hashes. If needed, it uploads first and only then sends the live sprite-switch message to the paired peer. If the remote check or upload fails, the local companion still changes sprite, but the remote session stays on the previous sprite so the peer never switches to a missing asset.
 
 In `remote random` mode, the client enters a server-side waiting pool rather than a shared broadcast room. Once matched, the server places the two peers into a temporary private room used only for that pair.
 

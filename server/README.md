@@ -62,6 +62,7 @@ Flags:
 
 - `POST /api/v1/sprites`: multipart upload with `png`, `json`, optional `config`, and fields `device_id`, `sprite_name`, `display_name`.
 - `GET /api/v1/sprites`: list public sprites. Use `?random=1&limit=10` for random results. The random list path uses an index-friendly random cursor strategy rather than `ORDER BY random()`.
+- `GET /api/v1/sprites?device_id=<id>&sprite_name=<name>`: fetch the latest sprite metadata record for one owner/name pair, or `{"sprite":null}` when that owner has not uploaded the named sprite.
 - `GET /api/v1/sprites/{sprite_id}`: fetch one sprite metadata record for public listing or upload management.
 - `GET /assets/{sprite_id}/sprite.png`: fetch uploaded PNG.
 - `GET /assets/{sprite_id}/sprite.json`: fetch uploaded spritesheet metadata.
@@ -79,6 +80,7 @@ Client messages:
 
 - `{"type":"state","state":"walk"}`
 - `{"type":"action","action":"roar"}`
+- `{"type":"sprite","sprite":"dino"}` updates the current live peer sprite after the client has confirmed the server already has matching assets.
 
 Broadcast messages:
 
@@ -87,8 +89,9 @@ Broadcast messages:
 - `peer_left`
 - `peer_state`
 - `peer_action`
+- `peer_sprite_changed`
 
-Newly joined clients first receive a `room_snapshot` containing the currently online peers in that room, including each peer's current sprite metadata plus latest known state. Incremental updates then arrive as `peer_joined`, `peer_left`, `peer_state`, and `peer_action`.
+Newly joined clients first receive a `room_snapshot` containing the currently online peers in that room, including each peer's current sprite metadata plus latest known state. Incremental updates then arrive as `peer_joined`, `peer_left`, `peer_state`, `peer_action`, and `peer_sprite_changed`.
 
 Each peer broadcast includes `peer_id`, `device_id`, and an embedded `sprite` object with that peer's sprite metadata and asset URLs. Room interaction does not depend on `/api/v1/sprites/{sprite_id}` lookups.
 

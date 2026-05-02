@@ -407,6 +407,21 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listSprites(w http.ResponseWriter, r *http.Request) {
+	deviceID := safeID(r.URL.Query().Get("device_id"))
+	spriteName := safeName(r.URL.Query().Get("sprite_name"))
+	if deviceID != "" && spriteName != "" {
+		record, err := s.loadSpriteByOwnerAndName(r.Context(), deviceID, spriteName)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusOK, map[string]any{"sprite": nil})
+			return
+		}
+		if err != nil {
+			http.Error(w, "database unavailable", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sprite": record.withBaseURL(s.requestBaseURL(r))})
+		return
+	}
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
@@ -646,6 +661,27 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		t, _ := msg["type"].(string)
+		if t == "sprite" {
+			nextSprite := safeName(stringValue(msg["sprite"]))
+			if nextSprite == "" {
+				continue
+			}
+			record, err := s.loadSpriteByOwnerAndName(r.Context(), client.deviceID, nextSprite)
+			if err != nil {
+				continue
+			}
+			record = record.withBaseURL(s.requestBaseURL(r))
+			if err := s.hub.updateClientSprite(client, record); err != nil {
+				continue
+			}
+			state := strings.TrimSpace(stringValue(msg["state"]))
+			if state != "" {
+				client.applyIncomingMessage("state", map[string]any{"state": state})
+			}
+			peerMsg := peerMessage("peer_sprite_changed", client)
+			sendDeliveries(s.hub.broadcast(client, peerMsg))
+			continue
+		}
 		outType := map[string]string{
 			"state":  "peer_state",
 			"action": "peer_action",
@@ -740,13 +776,16 @@ func (r spriteRecord) withBaseURL(baseURL string) spriteRecord {
 }
 
 func peerMessage(messageType string, client *wsClient) map[string]any {
+	sprite, state := client.presenceSnapshot()
 	msg := map[string]any{
 		"type":      messageType,
 		"peer_id":   client.id,
 		"device_id": client.deviceID,
-		"sprite":    client.sprite,
+		"sprite":    sprite,
 	}
-	client.appendPresence(msg)
+	if state != "" {
+		msg["state"] = state
+	}
 	return msg
 }
 
@@ -896,6 +935,18 @@ func (h *hub) broadcast(sender *wsClient, msg map[string]any) []delivery {
 		target: peer,
 		raw:    data,
 	}}
+}
+
+func (h *hub) updateClientSprite(c *wsClient, sprite spriteRecord) error {
+	h.onlineMu.Lock()
+	defer h.onlineMu.Unlock()
+	if existing := h.onlineSprites[sprite.ID]; existing != nil && existing != c {
+		return fmt.Errorf("sprite is already online")
+	}
+	delete(h.onlineSprites, c.spriteID)
+	c.setSprite(sprite)
+	h.onlineSprites[c.spriteID] = c
+	return nil
 }
 
 func (h *hub) removeWaitingLocked(clientID string) {
@@ -1114,6 +1165,19 @@ func (c *wsClient) appendPresence(msg map[string]any) {
 	if c.state != "" {
 		msg["state"] = c.state
 	}
+}
+
+func (c *wsClient) presenceSnapshot() (spriteRecord, string) {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.sprite, c.state
+}
+
+func (c *wsClient) setSprite(sprite spriteRecord) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.sprite = sprite
+	c.spriteID = sprite.ID
 }
 
 func (c *wsClient) applyIncomingMessage(messageType string, msg map[string]any) {
