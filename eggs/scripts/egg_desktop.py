@@ -35,13 +35,17 @@ CLIENT_FILE = APP_DIR / "client.json"
 REMOTE_FILE = APP_DIR / "remote.json"
 REMOTE_CACHE_DIR = APP_DIR / "remote"
 REMOTE_PEERS_FILE = APP_DIR / "remote-peers.json"
-BUNDLED_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_DIR = SCRIPT_DIR.parent
+BUNDLED_ASSETS_DIR = SKILL_DIR / "assets"
 SWIFT_SOURCE = Path(__file__).resolve().with_name("EggDesktop.swift")
 SWIFT_BINARY = APP_DIR / "EggDesktop"
 DEFAULT_SPRITE_SIZE = 251
 DEFAULT_SPRITE = "dino"
 FRAME_MS = 33
 ANIMATION_MS = 180
+REMOTE_HEARTBEAT_SECONDS = 20.0
+REMOTE_RECONNECT_SECONDS = 2.0
 DEFAULT_ANIMATIONS = [
     "unborn",
     "ready",
@@ -64,6 +68,37 @@ HTTP_HEADERS = {
 
 def ensure_app_dir() -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def bundled_assets_dirs() -> list[Path]:
+    candidates = [
+        Path(os.environ["EGGS_ASSETS_DIR"]).expanduser() if os.environ.get("EGGS_ASSETS_DIR") else None,
+        SKILL_DIR / "assets",
+        SKILL_DIR.parent / "eggs" / "assets",
+        Path.cwd() / "assets",
+        Path.cwd() / "eggs" / "assets",
+    ]
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            path = candidate.resolve()
+        except OSError:
+            path = candidate.expanduser()
+        if path in seen:
+            continue
+        seen.add(path)
+        resolved.append(path)
+    return resolved
+
+
+def preferred_bundled_assets_dir() -> Path:
+    for path in bundled_assets_dirs():
+        if path.exists():
+            return path
+    return bundled_assets_dirs()[0] if bundled_assets_dirs() else BUNDLED_ASSETS_DIR
 
 
 def default_config() -> dict:
@@ -516,7 +551,7 @@ def ensure_swift_binary() -> Path | None:
 def runtime_command() -> list[str] | None:
     swift_binary = ensure_swift_binary()
     if swift_binary is not None:
-        return [str(swift_binary), str(BUNDLED_ASSETS_DIR)]
+        return [str(swift_binary), str(preferred_bundled_assets_dir())]
     python_exec = python_with_tk()
     if python_exec is not None:
         return [python_exec, str(Path(__file__).resolve()), "run"]
@@ -826,7 +861,17 @@ def local_sprite_upload_payload(sprite_name: str) -> tuple[dict[str, tuple[str, 
     sprite = normalize_sprite(sprite_name)
     image, metadata = local_sprite_paths(sprite)
     if image is None or metadata is None:
-        print(f"missing local sprite assets for {sprite}; expected <sprite>.png and <sprite>.json", file=sys.stderr)
+        user_image = APP_DIR / f"{sprite}.png"
+        user_metadata = APP_DIR / f"{sprite}.json"
+        bundled_paths = []
+        for assets_dir in bundled_assets_dirs():
+            bundled_paths.append(str(assets_dir / f"{sprite}.png"))
+            bundled_paths.append(str(assets_dir / f"{sprite}.json"))
+        print(
+            "missing local sprite assets for "
+            f"{sprite}; looked for {user_image}, {user_metadata}, {', '.join(bundled_paths)}",
+            file=sys.stderr,
+        )
         return {}, None
     try:
         meta_data = json.loads(metadata.read_text(encoding="utf-8"))
@@ -1013,11 +1058,12 @@ def remote_command(action: str | None, value: str | None = None) -> int:
 def find_spritesheet(sprite_name: str) -> Path | None:
     sprite = normalize_sprite(sprite_name)
     user_spritesheet = APP_DIR / f"{sprite}.png"
-    bundled_spritesheet = BUNDLED_ASSETS_DIR / f"{sprite}.png"
     if user_spritesheet.exists():
         return user_spritesheet
-    if bundled_spritesheet.exists():
-        return bundled_spritesheet
+    for assets_dir in bundled_assets_dirs():
+        bundled_spritesheet = assets_dir / f"{sprite}.png"
+        if bundled_spritesheet.exists():
+            return bundled_spritesheet
     return None
 
 
@@ -1074,8 +1120,8 @@ def load_sprite_frames(tk, sprite_name: str) -> tuple[list, int, int, int, int]:
     if frames:
         return frames, frame_w, frame_h, cols, rows
 
-    bundled_default = BUNDLED_ASSETS_DIR / f"{DEFAULT_SPRITE}.png"
-    if spritesheet != bundled_default and bundled_default.exists():
+    bundled_default = find_spritesheet(DEFAULT_SPRITE)
+    if bundled_default is not None and spritesheet != bundled_default:
         print(f"falling back to bundled sprite {bundled_default}", file=sys.stderr)
         return load_sprite_frames_from_paths(tk, bundled_default, find_metadata(bundled_default))
     return frames, frame_w, frame_h, cols, rows
@@ -1284,7 +1330,8 @@ def websocket_url(server_url: str, query: dict[str, str]) -> str:
 
 
 def download_url(url: str, target: Path, timeout: float = 15.0) -> None:
-    with request.urlopen(url, timeout=timeout) as response:
+    req = request.Request(url, headers=HTTP_HEADERS)
+    with request.urlopen(req, timeout=timeout) as response:
         data = response.read()
     target.write_bytes(data)
 
@@ -1397,34 +1444,44 @@ class RemoteSession:
         self.thread.start()
 
     def _run(self) -> None:
-        query = {
-            "device_id": self.client["device_id"],
-            "mode": self.remote.get("mode", "random"),
-            "room": self.remote.get("room", ""),
-            "sprite": normalize_sprite(self.remote.get("sprite") or read_sprite()),
-        }
-        url = websocket_url(self.remote["server_url"], query)
-        try:
-            self.ws = SimpleWebSocket(url)
-            self.connected = True
-            while not self.closed:
-                self.inbox.put(self.ws.recv_json())
-        except Exception as exc:
-            if not self.closed:
-                print(f"remote websocket stopped: {exc}", file=sys.stderr)
-        finally:
-            self.connected = False
+        while not self.closed:
+            query = {
+                "device_id": self.client["device_id"],
+                "mode": self.remote.get("mode", "random"),
+                "room": self.remote.get("room", ""),
+                "sprite": normalize_sprite(self.remote.get("sprite") or read_sprite()),
+            }
+            url = websocket_url(self.remote["server_url"], query)
+            try:
+                self.ws = SimpleWebSocket(url)
+                self.connected = True
+                self.inbox.put({"type": "remote_connected"})
+                while not self.closed:
+                    self.inbox.put(self.ws.recv_json())
+            except Exception as exc:
+                if not self.closed:
+                    self.inbox.put({"type": "remote_disconnected"})
+                    print(f"remote websocket stopped: {exc}", file=sys.stderr)
+                    time.sleep(REMOTE_RECONNECT_SECONDS)
+            finally:
+                self.connected = False
+                self.ws = None
 
-    def send(self, data: dict) -> None:
+    def send(self, data: dict) -> bool:
         if self.ws is None or not self.connected:
-            return
+            return False
         try:
             self.ws.send_json(data)
+            return True
         except Exception:
             self.connected = False
+            return False
 
-    def send_sprite(self, sprite: str) -> None:
-        self.send({"type": "sprite", "sprite": normalize_sprite(sprite)})
+    def send_sprite(self, sprite: str, state: str | None = None) -> bool:
+        payload: dict[str, str] = {"type": "sprite", "sprite": normalize_sprite(sprite)}
+        if state:
+            payload["state"] = state
+        return self.send(payload)
 
     def close(self) -> None:
         self.closed = True
@@ -1921,17 +1978,32 @@ def run_remote_sidecar() -> int:
     remote_session.start()
     peer_states: dict[str, dict] = {}
     last_sprite, last_state = read_runtime_state()
+    pending_sprite_announce = True
+    pending_state_sync = True
+    next_heartbeat_at = 0.0
     write_remote_peers({"enabled": True, "peers": []})
     try:
         while remote_enabled():
+            now = time.time()
             next_sprite, next_state = read_runtime_state()
             if next_sprite != last_sprite:
                 last_sprite = next_sprite
                 if ensure_remote_sprite_uploaded(last_sprite, quiet=True):
-                    remote_session.send_sprite(last_sprite)
+                    pending_sprite_announce = True
+                    pending_state_sync = True
             if next_state != last_state:
                 last_state = next_state
-                remote_session.send({"type": "state", "state": last_state, "sprite": last_sprite})
+                pending_state_sync = True
+            if remote_session.connected:
+                if pending_sprite_announce:
+                    if remote_session.send_sprite(last_sprite, last_state):
+                        pending_sprite_announce = False
+                        pending_state_sync = False
+                        next_heartbeat_at = now + REMOTE_HEARTBEAT_SECONDS
+                elif pending_state_sync or now >= next_heartbeat_at:
+                    if remote_session.send({"type": "state", "state": last_state, "sprite": last_sprite}):
+                        pending_state_sync = False
+                        next_heartbeat_at = now + REMOTE_HEARTBEAT_SECONDS
             drained = False
             while True:
                 try:
@@ -1940,6 +2012,13 @@ def run_remote_sidecar() -> int:
                     break
                 drained = True
                 msg_type = str(msg.get("type", ""))
+                if msg_type == "remote_connected":
+                    pending_sprite_announce = True
+                    pending_state_sync = True
+                    next_heartbeat_at = 0.0
+                    continue
+                if msg_type == "remote_disconnected":
+                    continue
                 if msg_type == "room_snapshot":
                     peer_states = {}
                     for peer in msg.get("peers", []):
