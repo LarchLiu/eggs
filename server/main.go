@@ -1298,13 +1298,14 @@ func readWebSocketFrame(r *bufio.Reader) (byte, []byte, error) {
 	opcode := h0 & 0x0f
 	masked := h1&0x80 != 0
 	length := uint64(h1 & 0x7f)
-	if length == 126 {
+	switch length {
+	case 126:
 		b := make([]byte, 2)
 		if _, err := io.ReadFull(r, b); err != nil {
 			return 0, nil, err
 		}
 		length = uint64(b[0])<<8 | uint64(b[1])
-	} else if length == 127 {
+	case 127:
 		b := make([]byte, 8)
 		if _, err := io.ReadFull(r, b); err != nil {
 			return 0, nil, err

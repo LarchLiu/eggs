@@ -280,7 +280,7 @@ func TestRejectInvalidMetadata(t *testing.T) {
 		"device_id":   "device-a",
 		"sprite_name": "bad",
 	}, map[string][]byte{
-		"png":  []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"png":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
 		"json": []byte(`{"frameWidth":0}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
@@ -493,7 +493,7 @@ func uploadTestSpriteWithStatus(t *testing.T, baseURL string, deviceID string, s
 		"sprite_name":  sprite,
 		"display_name": sprite,
 	}, map[string][]byte{
-		"png":  []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"png":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
 		"json": []byte(`{"frameWidth":251,"frameHeight":251,"columns":1,"rows":1,"frameCount":1,"image":"` + sprite + `.png"}`),
 	})
 	resp, err := http.Post(baseURL+"/api/v1/sprites", contentType, bytes.NewReader(body))
