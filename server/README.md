@@ -13,6 +13,35 @@ go build -o eggs-server .
 
 The server uses `modernc.org/sqlite`, a pure Go SQLite implementation. The built server does not require a target machine to have a SQLite dynamic library installed.
 
+## Docker Compose
+
+```bash
+cd server
+docker compose up -d --build
+```
+
+This uses:
+
+- [Dockerfile](/Users/alex/Work/cloudgeek/eggs/server/Dockerfile)
+- [docker-compose.yml](/Users/alex/Work/cloudgeek/eggs/server/docker-compose.yml)
+
+Persistent data is stored in [data](</Users/alex/Work/cloudgeek/eggs/server/data>) on the host and mounted to `/data` in the container.
+
+Useful environment overrides:
+
+- `EGGS_SERVER_PORT=8787`
+- `EGGS_BASE_URL=http://your-host:8787`
+- `EGGS_PUBLIC_BY_DEFAULT=true`
+
+Example:
+
+```bash
+cd server
+EGGS_BASE_URL=https://eggs.example.com \
+EGGS_SERVER_PORT=8787 \
+docker compose up -d --build
+```
+
 ## Run
 
 ```bash
