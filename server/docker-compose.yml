@@ -19,4 +19,5 @@ services:
 
 volumes:
   eggs-server-data:
+    external: true
     name: eggs-server-data
