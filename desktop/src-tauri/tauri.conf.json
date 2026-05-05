@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Eggs",
+  "version": "0.1.0",
+  "identifier": "fun.larch.eggs.desktop",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "pet",
+        "title": "Eggs",
+        "width": 192,
+        "height": 208,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "acceptFirstMouse": true,
+        "visibleOnAllWorkspaces": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/.codex/pets/**",
+          "$HOME/.codex/eggs/remote/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "Utility",
+    "shortDescription": "Animated desktop pet",
+    "longDescription": "Codex-compatible animated desktop pet powered by hatch-pet generated assets.",
+    "targets": "all"
+  }
+}

@@ -1,0 +1,31 @@
+/* Codex pet contract: each cell is 192x208. The window is exactly one cell. */
+:root {
+  --cell-w: 192px;
+  --cell-h: 208px;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: var(--cell-w);
+  height: var(--cell-h);
+  background: transparent !important;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#pet {
+  width: var(--cell-w);
+  height: var(--cell-h);
+  background-repeat: no-repeat;
+  /* Preserve the chunky pixel-art look on retina / scaled displays. */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#pet[data-grab="true"] {
+  cursor: grabbing;
+}

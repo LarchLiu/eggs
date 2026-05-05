@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -89,7 +92,7 @@ func TestUploadAndListSprite(t *testing.T) {
 	if record["id"] == "" {
 		t.Fatalf("missing sprite id: %#v", record)
 	}
-	if record["png_hash"] == "" || record["json_hash"] == "" {
+	if record["sprite_hash"] == "" || record["json_hash"] == "" {
 		t.Fatalf("missing asset hashes: %#v", record)
 	}
 
@@ -113,7 +116,7 @@ func TestUploadAndListSprite(t *testing.T) {
 	if list.Sprites[0]["name"] != "dino" {
 		t.Fatalf("name=%v", list.Sprites[0]["name"])
 	}
-	if list.Sprites[0]["png_hash"] == "" || list.Sprites[0]["json_hash"] == "" {
+	if list.Sprites[0]["sprite_hash"] == "" || list.Sprites[0]["json_hash"] == "" {
 		t.Fatalf("list missing asset hashes: %#v", list.Sprites[0])
 	}
 }
@@ -189,15 +192,15 @@ func TestDuplicateUploadDifferentDevicesReuseFiles(t *testing.T) {
 		t.Fatalf("sprite rows=%d, want 2", rows)
 	}
 
-	var png1, png2, json1, json2 string
-	if err := s.db.QueryRow(`SELECT png_path, json_path FROM sprites WHERE id=?`, first["id"]).Scan(&png1, &json1); err != nil {
+	var sprite1, sprite2, json1, json2 string
+	if err := s.db.QueryRow(`SELECT sprite_path, json_path FROM sprites WHERE id=?`, first["id"]).Scan(&sprite1, &json1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.db.QueryRow(`SELECT png_path, json_path FROM sprites WHERE id=?`, second["id"]).Scan(&png2, &json2); err != nil {
+	if err := s.db.QueryRow(`SELECT sprite_path, json_path FROM sprites WHERE id=?`, second["id"]).Scan(&sprite2, &json2); err != nil {
 		t.Fatal(err)
 	}
-	if png1 != png2 {
-		t.Fatalf("expected shared png path, got %s vs %s", png1, png2)
+	if sprite1 != sprite2 {
+		t.Fatalf("expected shared sprite path, got %s vs %s", sprite1, sprite2)
 	}
 	if json1 != json2 {
 		t.Fatalf("expected shared json path, got %s vs %s", json1, json2)
@@ -280,7 +283,7 @@ func TestRejectInvalidMetadata(t *testing.T) {
 		"device_id":   "device-a",
 		"sprite_name": "bad",
 	}, map[string][]byte{
-		"png":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"sprite":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
 		"json": []byte(`{"frameWidth":0}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
@@ -291,6 +294,287 @@ func TestRejectInvalidMetadata(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400", resp.StatusCode)
 	}
+}
+
+func TestUploadPetWebPManifest(t *testing.T) {
+	_, ts := newTestServer(t)
+	manifest := []byte(`{"id":"noir-webling","displayName":"Noir Webling","description":"tiny detective spider","spritesheetPath":"spritesheet.webp"}`)
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":    "device-pet",
+		"sprite_name":  "noir-webling",
+		"display_name": "Noir Webling",
+	}, map[string][]byte{
+		"sprite":  webpFixture(),
+		"json": manifest,
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload status=%d body=%s", resp.StatusCode, string(raw))
+	}
+	var record map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	if record["name"] != "noir-webling" {
+		t.Fatalf("unexpected name: %#v", record)
+	}
+	if record["display_name"] != "Noir Webling" {
+		t.Fatalf("unexpected display_name: %#v", record)
+	}
+	spriteURL, _ := record["sprite_url"].(string)
+	if spriteURL == "" {
+		t.Fatalf("missing sprite_url: %#v", record)
+	}
+	imgResp, err := http.Get(spriteURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer imgResp.Body.Close()
+	if imgResp.StatusCode != http.StatusOK {
+		t.Fatalf("asset status=%d", imgResp.StatusCode)
+	}
+	if ct := imgResp.Header.Get("Content-Type"); ct != "image/webp" {
+		t.Fatalf("served Content-Type=%q, want image/webp", ct)
+	}
+	if !strings.HasSuffix(spriteURL, "/sprite.webp") {
+		t.Fatalf("sprite_url=%q, want a URL ending in /sprite.webp", spriteURL)
+	}
+	served, err := io.ReadAll(imgResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(served, webpFixture()) {
+		t.Fatalf("served bytes do not match upload (len served=%d want=%d)", len(served), len(webpFixture()))
+	}
+}
+
+func TestRejectPetManifestMissingSpritesheetPath(t *testing.T) {
+	_, ts := newTestServer(t)
+	manifest := []byte(`{"id":"orphan","displayName":"Orphan"}`)
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":   "device-pet",
+		"sprite_name": "orphan",
+	}, map[string][]byte{
+		"sprite":  webpFixture(),
+		"json": manifest,
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d, want 400, body=%s", resp.StatusCode, string(raw))
+	}
+}
+
+func TestRejectUnknownSpritesheetFormat(t *testing.T) {
+	_, ts := newTestServer(t)
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":   "device-pet",
+		"sprite_name": "junk",
+	}, map[string][]byte{
+		"sprite":  []byte("definitely not an image"),
+		"json": []byte(`{"id":"junk","spritesheetPath":"x.webp"}`),
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", resp.StatusCode)
+	}
+}
+
+func TestUploadHashOnlyMissingBlob(t *testing.T) {
+	_, ts := newTestServer(t)
+	spriteHash := sha256Hex(webpFixture())
+	jsonHash := sha256Hex([]byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`))
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":   "device-cold",
+		"sprite_name": "noir-webling",
+		"sprite_hash":    spriteHash,
+		"json_hash":   jsonHash,
+	}, map[string][]byte{})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s, want 404", resp.StatusCode, string(raw))
+	}
+	var missing struct {
+		Missing []string `json:"missing"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&missing); err != nil {
+		t.Fatal(err)
+	}
+	if !containsAll(missing.Missing, "sprite", "json") {
+		t.Fatalf("missing=%v, want both sprite and json", missing.Missing)
+	}
+}
+
+func TestUploadHashOnlyAfterCrossDeviceUpload(t *testing.T) {
+	srv, ts := newTestServer(t)
+	spriteBytes := webpFixture()
+	manifest := []byte(`{"id":"noir-webling","displayName":"Noir Webling","spritesheetPath":"spritesheet.webp"}`)
+	spriteHash := sha256Hex(spriteBytes)
+	jsonHash := sha256Hex(manifest)
+
+	// Device A uploads the full payload.
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":    "device-a",
+		"sprite_name":  "noir-webling",
+		"display_name": "Noir Webling",
+	}, map[string][]byte{
+		"sprite":  spriteBytes,
+		"json": manifest,
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("device-a upload status=%d body=%s", resp.StatusCode, string(raw))
+	}
+	var aRecord map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&aRecord); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Device B uploads HASH-ONLY -- no file parts. Bytes are already on disk
+	// from device-a, so the server must register a brand-new sprites row for
+	// device-b without re-reading bytes off the wire.
+	body2, contentType2 := multipartUploadBody(t, map[string]string{
+		"device_id":    "device-b",
+		"sprite_name":  "noir-webling",
+		"display_name": "Noir Webling",
+		"sprite_hash":     spriteHash,
+		"json_hash":    jsonHash,
+	}, map[string][]byte{})
+	resp2, err := http.Post(ts.URL+"/api/v1/sprites", contentType2, bytes.NewReader(body2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("device-b hash-only status=%d body=%s, want 201", resp2.StatusCode, string(raw))
+	}
+	var bRecord map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&bRecord); err != nil {
+		t.Fatal(err)
+	}
+
+	// Different sprite_id (per-device row), same sprite_hash + json_hash.
+	if bRecord["id"] == aRecord["id"] {
+		t.Fatalf("expected new sprite row for device-b, got same id %v", aRecord["id"])
+	}
+	if bRecord["sprite_hash"] != spriteHash || bRecord["json_hash"] != jsonHash {
+		t.Fatalf("hashes drifted: %#v", bRecord)
+	}
+
+	// Storage check: still exactly one sprite blob and one json blob on disk.
+	spriteBlobs, _ := os.ReadDir(filepath.Join(srv.assetsDir, "blobs", "sprite"))
+	jsonBlobs, _ := os.ReadDir(filepath.Join(srv.assetsDir, "blobs", "json"))
+	if len(spriteBlobs) != 1 {
+		t.Fatalf("expected 1 sprite blob, got %d", len(spriteBlobs))
+	}
+	if len(jsonBlobs) != 1 {
+		t.Fatalf("expected 1 json blob, got %d", len(jsonBlobs))
+	}
+}
+
+func TestUploadRejectsHashMismatch(t *testing.T) {
+	_, ts := newTestServer(t)
+	spriteBytes := webpFixture()
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":   "device-pet",
+		"sprite_name": "noir-webling",
+		"sprite_hash":    strings.Repeat("a", 64), // 64 hex chars but wrong content
+	}, map[string][]byte{
+		"sprite":  spriteBytes,
+		"json": []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s, want 400", resp.StatusCode, string(raw))
+	}
+}
+
+func TestUploadRejectsMalformedHashHint(t *testing.T) {
+	_, ts := newTestServer(t)
+	body, contentType := multipartUploadBody(t, map[string]string{
+		"device_id":   "device-pet",
+		"sprite_name": "noir-webling",
+		"sprite_hash":    "not-a-real-hash",
+	}, map[string][]byte{
+		"sprite":  webpFixture(),
+		"json": []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", resp.StatusCode)
+	}
+}
+
+// sha256Hex mirrors fileHash so test fixtures can compute hashes without
+// reaching into internals.
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func containsAll(haystack []string, needles ...string) bool {
+	for _, n := range needles {
+		found := false
+		for _, h := range haystack {
+			if h == n {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// webpFixture returns the bytes of a minimal valid WebP container. The body
+// after the RIFF/WEBP magic is irrelevant for the upload path -- the server
+// only inspects the magic prefix.
+func webpFixture() []byte {
+	body := []byte("VP8 dummy payload")
+	// RIFF chunk size = 4 (for "WEBP") + len(body)
+	chunkSize := uint32(4 + len(body))
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("RIFF")
+	_ = binary.Write(buf, binary.LittleEndian, chunkSize)
+	buf.WriteString("WEBP")
+	buf.Write(body)
+	return buf.Bytes()
 }
 
 func TestWebSocketRoomBroadcastAndIsolation(t *testing.T) {
@@ -493,7 +777,7 @@ func uploadTestSpriteWithStatus(t *testing.T, baseURL string, deviceID string, s
 		"sprite_name":  sprite,
 		"display_name": sprite,
 	}, map[string][]byte{
-		"png":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"sprite":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
 		"json": []byte(`{"frameWidth":251,"frameHeight":251,"columns":1,"rows":1,"frameCount":1,"image":"` + sprite + `.png"}`),
 	})
 	resp, err := http.Post(baseURL+"/api/v1/sprites", contentType, bytes.NewReader(body))

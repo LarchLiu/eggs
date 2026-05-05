@@ -66,25 +66,33 @@ type spriteRecord struct {
 	Name          string  `json:"name"`
 	DisplayName   string  `json:"display_name"`
 	Status        string  `json:"status"`
-	PNGURL        string  `json:"png_url"`
+	SpriteURL     string  `json:"sprite_url"`
 	JSONURL       string  `json:"json_url"`
 	ConfigURL     *string `json:"config_url,omitempty"`
-	PNGHash       string  `json:"png_hash"`
+	SpriteHash    string  `json:"sprite_hash"`
 	JSONHash      string  `json:"json_hash"`
 	ConfigHash    *string `json:"config_hash,omitempty"`
 	CreatedAt     string  `json:"created_at"`
-	PNGPath       string  `json:"-"`
+	SpritePath    string  `json:"-"`
 	JSONPath      string  `json:"-"`
 	ConfigPath    string  `json:"-"`
 }
 
 type sheetMetadata struct {
+	// Legacy spritesheet fields (older clients still upload these).
 	FrameWidth  int    `json:"frameWidth"`
 	FrameHeight int    `json:"frameHeight"`
 	Columns     int    `json:"columns"`
 	Rows        int    `json:"rows"`
 	FrameCount  int    `json:"frameCount"`
 	Image       string `json:"image"`
+
+	// Codex pet manifest fields. When SpritesheetPath is non-empty the
+	// upload is treated as a pet package and the legacy fields are optional.
+	ID              string `json:"id,omitempty"`
+	DisplayName     string `json:"displayName,omitempty"`
+	Description     string `json:"description,omitempty"`
+	SpritesheetPath string `json:"spritesheetPath,omitempty"`
 }
 
 type wsClient struct {
@@ -129,7 +137,7 @@ type delivery struct {
 }
 
 type assetPaths struct {
-	png    string
+	sprite string
 	json   string
 	config string
 }
@@ -223,10 +231,10 @@ func (s *server) migrate() error {
 			name TEXT NOT NULL,
 			display_name TEXT NOT NULL,
 			status TEXT NOT NULL,
-			png_path TEXT NOT NULL,
+			sprite_path TEXT NOT NULL,
 			json_path TEXT NOT NULL,
 			config_path TEXT,
-			png_hash TEXT NOT NULL DEFAULT '',
+			sprite_hash TEXT NOT NULL DEFAULT '',
 			json_hash TEXT NOT NULL DEFAULT '',
 			config_hash TEXT,
 			created_at TEXT NOT NULL
@@ -234,7 +242,7 @@ func (s *server) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sprites_owner_name_created_at
 			ON sprites(owner_device_id, name, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sprites_owner_name_hashes
-			ON sprites(owner_device_id, name, png_hash, json_hash, config_hash, created_at DESC)`,
+			ON sprites(owner_device_id, name, sprite_hash, json_hash, config_hash, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sprites_status_created_at
 			ON sprites(status, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sprites_status_id
@@ -245,8 +253,25 @@ func (s *server) migrate() error {
 			return err
 		}
 	}
+	// Rename pre-rename columns from old deployments. Idempotent: skipped
+	// when the new name already exists OR the old name doesn't.
+	for _, rename := range [][2]string{
+		{"png_path", "sprite_path"},
+		{"png_hash", "sprite_hash"},
+	} {
+		oldCol, newCol := rename[0], rename[1]
+		hasOld, hasNew, err := columnsExist(s.db, "sprites", oldCol, newCol)
+		if err != nil {
+			return err
+		}
+		if hasOld && !hasNew {
+			if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE sprites RENAME COLUMN %s TO %s`, oldCol, newCol)); err != nil {
+				return err
+			}
+		}
+	}
 	for _, stmt := range []string{
-		`ALTER TABLE sprites ADD COLUMN png_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sprites ADD COLUMN sprite_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sprites ADD COLUMN json_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sprites ADD COLUMN config_hash TEXT`,
 	} {
@@ -255,6 +280,37 @@ func (s *server) migrate() error {
 		}
 	}
 	return nil
+}
+
+// columnsExist returns (hasA, hasB) for the given column names on the given
+// table, using PRAGMA table_info.
+func columnsExist(db *sql.DB, table, colA, colB string) (bool, bool, error) {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false, false, err
+	}
+	defer rows.Close()
+	hasA, hasB := false, false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false, false, err
+		}
+		switch name {
+		case colA:
+			hasA = true
+		case colB:
+			hasB = true
+		}
+	}
+	return hasA, hasB, rows.Err()
 }
 
 func (s *server) handleSprites(w http.ResponseWriter, r *http.Request) {
@@ -291,50 +347,83 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		displayName = spriteName
 	}
 
-	png, err := readPart(r.MultipartForm, "png", maxPNGBytes)
+	spriteHashHint, err := normalizeHashHint(r.FormValue("sprite_hash"))
+	if err != nil {
+		http.Error(w, "sprite_hash: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonHashHint, err := normalizeHashHint(r.FormValue("json_hash"))
+	if err != nil {
+		http.Error(w, "json_hash: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	configHashHint, err := normalizeHashHint(r.FormValue("config_hash"))
+	if err != nil {
+		http.Error(w, "config_hash: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	spriteMat, err := s.resolveMaterial(r.MultipartForm, "sprite", spriteHashHint, "sprite", []string{".png", ".webp"}, maxPNGBytes, true)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !isPNG(png) {
-		http.Error(w, "png must be a PNG file", http.StatusBadRequest)
-		return
-	}
-	metaBytes, err := readPart(r.MultipartForm, "json", maxJSONBytes)
+	jsonMat, err := s.resolveMaterial(r.MultipartForm, "json", jsonHashHint, "json", []string{".json"}, maxJSONBytes, true)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var meta sheetMetadata
-	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		http.Error(w, "invalid sprite json", http.StatusBadRequest)
-		return
-	}
-	if err := validateMetadata(meta); err != nil {
+	configMat, err := s.resolveMaterial(r.MultipartForm, "config", configHashHint, "config", []string{".json"}, maxConfigBytes, false)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var configBytes []byte
-	if hasPart(r.MultipartForm, "config") {
-		configBytes, err = readPart(r.MultipartForm, "config", maxConfigBytes)
-		if err != nil {
+	missing := make([]string, 0, 3)
+	if spriteMat.missingBlob {
+		missing = append(missing, "sprite")
+	}
+	if jsonMat.missingBlob {
+		missing = append(missing, "json")
+	}
+	if configMat.missingBlob {
+		missing = append(missing, "config")
+	}
+	if len(missing) > 0 {
+		writeJSON(w, http.StatusNotFound, map[string]any{"missing": missing})
+		return
+	}
+
+	// Validate uploaded bytes only when freshly received. Bytes coming from an
+	// existing blob were validated when first uploaded; re-running validation
+	// would force pet manifests to be re-readable from disk for no real gain.
+	if spriteMat.bytes != nil && !isAcceptedSpritesheet(spriteMat.bytes) {
+		http.Error(w, "spritesheet must be PNG or WebP", http.StatusBadRequest)
+		return
+	}
+	if jsonMat.bytes != nil {
+		var meta sheetMetadata
+		if err := json.Unmarshal(jsonMat.bytes, &meta); err != nil {
+			http.Error(w, "invalid sprite json", http.StatusBadRequest)
+			return
+		}
+		if err := validateMetadata(meta); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if len(bytes.TrimSpace(configBytes)) > 0 {
-			if err := validateConfig(configBytes); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
+	}
+	if configMat.bytes != nil && len(bytes.TrimSpace(configMat.bytes)) > 0 {
+		if err := validateConfig(configMat.bytes); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 
-	pngHash := fileHash(png)
-	jsonHash := fileHash(metaBytes)
-	configHash := ""
-	if len(bytes.TrimSpace(configBytes)) > 0 {
-		configHash = fileHash(configBytes)
+	spriteHash := spriteMat.hash
+	jsonHash := jsonMat.hash
+	configHash := configMat.hash
+	if configMat.bytes != nil && len(bytes.TrimSpace(configMat.bytes)) == 0 {
+		configHash = ""
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -352,7 +441,7 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not upsert device", http.StatusInternalServerError)
 		return
 	}
-	existingID, err := existingSpriteID(tx, deviceID, spriteName, pngHash, jsonHash, configHash)
+	existingID, err := existingSpriteID(tx, deviceID, spriteName, spriteHash, jsonHash, configHash)
 	if err != nil {
 		http.Error(w, "could not query existing sprite", http.StatusInternalServerError)
 		return
@@ -368,19 +457,25 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pngPath, err := ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "png"), pngHash, ".png", png)
-	if err != nil {
-		http.Error(w, "could not store png", http.StatusInternalServerError)
-		return
+	spritePath := spriteMat.blobPath
+	if spriteMat.bytes != nil {
+		spritePath, err = ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "sprite"), spriteHash, spritesheetSuffix(spriteMat.bytes), spriteMat.bytes)
+		if err != nil {
+			http.Error(w, "could not store png", http.StatusInternalServerError)
+			return
+		}
 	}
-	jsonPath, err := ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "json"), jsonHash, ".json", metaBytes)
-	if err != nil {
-		http.Error(w, "could not store json", http.StatusInternalServerError)
-		return
+	jsonPath := jsonMat.blobPath
+	if jsonMat.bytes != nil {
+		jsonPath, err = ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "json"), jsonHash, ".json", jsonMat.bytes)
+		if err != nil {
+			http.Error(w, "could not store json", http.StatusInternalServerError)
+			return
+		}
 	}
-	configPath := ""
-	if configHash != "" {
-		configPath, err = ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "config"), configHash, ".json", configBytes)
+	configPath := configMat.blobPath
+	if configMat.bytes != nil && len(bytes.TrimSpace(configMat.bytes)) > 0 {
+		configPath, err = ensureBlobFile(filepath.Join(s.assetsDir, "blobs", "config"), configHash, ".json", configMat.bytes)
 		if err != nil {
 			http.Error(w, "could not store config", http.StatusInternalServerError)
 			return
@@ -389,9 +484,9 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 
 	id := randomID()
 	if _, err := tx.Exec(`INSERT INTO sprites(
-			id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+			id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at
 		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, deviceID, spriteName, displayName, status, pngPath, jsonPath, nullable(configPath), pngHash, jsonHash, nullable(configHash), now,
+		id, deviceID, spriteName, displayName, status, spritePath, jsonPath, nullable(configPath), spriteHash, jsonHash, nullable(configHash), now,
 	); err != nil {
 		http.Error(w, "could not insert sprite", http.StatusInternalServerError)
 		return
@@ -400,7 +495,7 @@ func (s *server) uploadSprite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not commit upload", http.StatusInternalServerError)
 		return
 	}
-	s.assetCacheStore(id, assetPaths{png: pngPath, json: jsonPath, config: configPath})
+	s.assetCacheStore(id, assetPaths{sprite: spritePath, json: jsonPath, config: configPath})
 	s.maybeCleanupDevices(context.Background())
 	record, _ := s.spriteByID(r.Context(), id, r)
 	writeJSON(w, http.StatusCreated, record)
@@ -446,7 +541,7 @@ func (s *server) listSprites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) latestPublicSprites(ctx context.Context, limit int, baseURL string) ([]spriteRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at
 		FROM sprites
 		WHERE status='public'
 		ORDER BY created_at DESC
@@ -475,7 +570,7 @@ func (s *server) randomPublicSprites(ctx context.Context, limit int, baseURL str
 }
 
 func (s *server) publicSpritesFromCursor(ctx context.Context, cursor string, limit int, baseURL string) ([]spriteRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at
 		FROM sprites
 		WHERE status='public' AND id >= ?
 		ORDER BY id
@@ -488,7 +583,7 @@ func (s *server) publicSpritesFromCursor(ctx context.Context, cursor string, lim
 }
 
 func (s *server) publicSpritesBeforeCursor(ctx context.Context, cursor string, limit int, baseURL string) ([]spriteRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at
 		FROM sprites
 		WHERE status='public' AND id < ?
 		ORDER BY id
@@ -548,7 +643,7 @@ func (s *server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	id := safeID(parts[0])
 	name := parts[1]
-	if id == "" || (name != "sprite.png" && name != "sprite.json" && name != "config.json") {
+	if id == "" || !isAcceptedAssetName(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -566,7 +661,7 @@ func (s *server) handleAsset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		path = assetPaths{
-			png:    record.PNGPath,
+			sprite: record.SpritePath,
 			json:   record.JSONPath,
 			config: record.ConfigPath,
 		}.pathFor(name)
@@ -707,13 +802,13 @@ func (s *server) spriteByID(ctx context.Context, id string, r *http.Request) (sp
 }
 
 func (s *server) loadSpriteRecord(ctx context.Context, id string) (spriteRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at FROM sprites WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at FROM sprites WHERE id=?`, id)
 	record, err := scanSprite(row, "")
 	if err != nil {
 		return record, err
 	}
 	s.assetCacheStore(record.ID, assetPaths{
-		png:    record.PNGPath,
+		sprite: record.SpritePath,
 		json:   record.JSONPath,
 		config: record.ConfigPath,
 	})
@@ -721,7 +816,7 @@ func (s *server) loadSpriteRecord(ctx context.Context, id string) (spriteRecord,
 }
 
 func (s *server) loadSpriteByOwnerAndName(ctx context.Context, deviceID string, spriteName string) (spriteRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, png_path, json_path, config_path, png_hash, json_hash, config_hash, created_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_device_id, name, display_name, status, sprite_path, json_path, config_path, sprite_hash, json_hash, config_hash, created_at
 		FROM sprites
 		WHERE owner_device_id=? AND name=?
 		ORDER BY created_at DESC
@@ -731,7 +826,7 @@ func (s *server) loadSpriteByOwnerAndName(ctx context.Context, deviceID string, 
 		return record, err
 	}
 	s.assetCacheStore(record.ID, assetPaths{
-		png:    record.PNGPath,
+		sprite: record.SpritePath,
 		json:   record.JSONPath,
 		config: record.ConfigPath,
 	})
@@ -740,15 +835,15 @@ func (s *server) loadSpriteByOwnerAndName(ctx context.Context, deviceID string, 
 
 func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (spriteRecord, error) {
 	var rec spriteRecord
-	var pngPath, jsonPath string
+	var spritePath, jsonPath string
 	var configPath sql.NullString
 	var configHash sql.NullString
-	if err := scanner.Scan(&rec.ID, &rec.OwnerDeviceID, &rec.Name, &rec.DisplayName, &rec.Status, &pngPath, &jsonPath, &configPath, &rec.PNGHash, &rec.JSONHash, &configHash, &rec.CreatedAt); err != nil {
+	if err := scanner.Scan(&rec.ID, &rec.OwnerDeviceID, &rec.Name, &rec.DisplayName, &rec.Status, &spritePath, &jsonPath, &configPath, &rec.SpriteHash, &rec.JSONHash, &configHash, &rec.CreatedAt); err != nil {
 		return rec, err
 	}
-	rec.PNGPath = pngPath
+	rec.SpritePath = spritePath
 	rec.JSONPath = jsonPath
-	rec.PNGURL = baseURL + "/assets/" + rec.ID + "/sprite.png"
+	rec.SpriteURL = baseURL + "/assets/" + rec.ID + "/" + spriteAssetName(spritePath)
 	rec.JSONURL = baseURL + "/assets/" + rec.ID + "/sprite.json"
 	if configPath.Valid && configPath.String != "" {
 		rec.ConfigPath = configPath.String
@@ -764,7 +859,7 @@ func scanSprite(scanner interface{ Scan(...any) error }, baseURL string) (sprite
 
 func (r spriteRecord) withBaseURL(baseURL string) spriteRecord {
 	out := r
-	out.PNGURL = baseURL + "/assets/" + r.ID + "/sprite.png"
+	out.SpriteURL = baseURL + "/assets/" + r.ID + "/" + spriteAssetName(r.SpritePath)
 	out.JSONURL = baseURL + "/assets/" + r.ID + "/sprite.json"
 	if r.ConfigHash != nil {
 		u := baseURL + "/assets/" + r.ID + "/config.json"
@@ -1357,18 +1452,18 @@ func writeWebSocketControl(w io.Writer, opcode byte, payload []byte) error {
 	return err
 }
 
-func existingSpriteID(tx *sql.Tx, deviceID string, spriteName string, pngHash string, jsonHash string, configHash string) (string, error) {
+func existingSpriteID(tx *sql.Tx, deviceID string, spriteName string, spriteHash string, jsonHash string, configHash string) (string, error) {
 	var id string
 	err := tx.QueryRow(
 		`SELECT id FROM sprites
 		WHERE owner_device_id = ?
 		  AND name = ?
-		  AND png_hash = ?
+		  AND sprite_hash = ?
 		  AND json_hash = ?
 		  AND COALESCE(config_hash, '') = ?
 		ORDER BY created_at DESC
 		LIMIT 1`,
-		deviceID, spriteName, pngHash, jsonHash, configHash,
+		deviceID, spriteName, spriteHash, jsonHash, configHash,
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -1425,8 +1520,8 @@ func (s *server) assetCacheStore(id string, paths assetPaths) {
 
 func (a assetPaths) pathFor(name string) string {
 	switch name {
-	case "sprite.png":
-		return a.png
+	case "sprite.png", "sprite.webp":
+		return a.sprite
 	case "sprite.json":
 		return a.json
 	case "config.json":
@@ -1460,7 +1555,95 @@ func hasPart(form *multipart.Form, name string) bool {
 	return form != nil && len(form.File[name]) > 0
 }
 
+// material captures one upload field (png / json / config) resolved either
+// from uploaded bytes or from an existing on-disk blob looked up by hash.
+type material struct {
+	bytes       []byte
+	hash        string
+	blobPath    string
+	missingBlob bool // true iff the client asked for hash-only mode but the blob is gone
+}
+
+// resolveMaterial returns the bytes-or-path resolution for a single multipart
+// field. If the file part is present, returns the uploaded bytes plus the
+// computed hash (cross-checked against claimedHash if provided). Otherwise
+// the field is in hash-only mode: we look for a blob at
+// `${assetsDir}/blobs/<blobSubdir>/<claimedHash><suffix>` for each suffix in
+// `suffixes`. If found, returns the blob path with bytes=nil. If neither file
+// part nor a usable hash is provided for a required field, returns a 400-style
+// error. If the field is hash-only but the blob is missing, returns a material
+// with missingBlob=true so the caller can build a 404 response.
+func (s *server) resolveMaterial(form *multipart.Form, field, claimedHash, blobSubdir string, suffixes []string, sizeLimit int64, required bool) (material, error) {
+	if hasPart(form, field) {
+		data, err := readPart(form, field, sizeLimit)
+		if err != nil {
+			return material{}, err
+		}
+		actual := fileHash(data)
+		if claimedHash != "" && !strings.EqualFold(claimedHash, actual) {
+			return material{}, fmt.Errorf("%s_hash does not match uploaded %s contents", field, field)
+		}
+		return material{bytes: data, hash: actual}, nil
+	}
+	if claimedHash == "" {
+		if required {
+			return material{}, fmt.Errorf("%s or %s_hash is required", field, field)
+		}
+		return material{}, nil
+	}
+	blobDir := filepath.Join(s.assetsDir, "blobs", blobSubdir)
+	for _, suffix := range suffixes {
+		candidate := filepath.Join(blobDir, claimedHash+suffix)
+		if _, err := os.Stat(candidate); err == nil {
+			return material{hash: claimedHash, blobPath: candidate}, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return material{}, err
+		}
+	}
+	return material{hash: claimedHash, missingBlob: true}, nil
+}
+
+var sha256HexRe = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
+
+// normalizeHashHint trims and lowercases a client-supplied SHA-256 hex string,
+// rejecting anything that does not have exactly 64 hex digits. An empty input
+// is allowed (means "no hint").
+func normalizeHashHint(raw string) (string, error) {
+	hint := strings.TrimSpace(raw)
+	if hint == "" {
+		return "", nil
+	}
+	if !sha256HexRe.MatchString(hint) {
+		return "", errors.New("must be a 64-character hex SHA-256 digest")
+	}
+	return strings.ToLower(hint), nil
+}
+
 func validateMetadata(meta sheetMetadata) error {
+	if strings.TrimSpace(meta.SpritesheetPath) != "" || strings.TrimSpace(meta.ID) != "" {
+		return validatePetMetadata(meta)
+	}
+	return validateLegacySheetMetadata(meta)
+}
+
+func validatePetMetadata(meta sheetMetadata) error {
+	id := strings.TrimSpace(meta.ID)
+	if id == "" {
+		return errors.New("pet manifest must contain id")
+	}
+	if safeName(id) == "" {
+		return errors.New("pet id must be alphanumeric, underscore, or hyphen")
+	}
+	if strings.TrimSpace(meta.SpritesheetPath) == "" {
+		return errors.New("pet manifest must contain spritesheetPath")
+	}
+	// Atlas geometry (8x9 cells of 192x208) is a hardcoded contract on the
+	// client; the server intentionally does not enforce it so future contract
+	// revisions don't require a coordinated server release.
+	return nil
+}
+
+func validateLegacySheetMetadata(meta sheetMetadata) error {
 	if meta.FrameWidth <= 0 || meta.FrameHeight <= 0 || meta.Columns <= 0 || meta.Rows <= 0 || meta.FrameCount <= 0 || strings.TrimSpace(meta.Image) == "" {
 		return errors.New("sprite json must contain frameWidth, frameHeight, columns, rows, frameCount, and image")
 	}
@@ -1526,6 +1709,51 @@ func validateConfig(data []byte) error {
 
 func isPNG(data []byte) bool {
 	return len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+}
+
+func isWebP(data []byte) bool {
+	return len(data) >= 12 &&
+		bytes.Equal(data[:4], []byte("RIFF")) &&
+		bytes.Equal(data[8:12], []byte("WEBP"))
+}
+
+func isAcceptedSpritesheet(data []byte) bool {
+	return isPNG(data) || isWebP(data)
+}
+
+// spritesheetSuffix picks the on-disk filename suffix for a stored blob. The
+// suffix is just a hint for human inspection of ${assetsDir}/blobs/sprite/;
+// the public asset URL is /assets/<id>/sprite.{png,webp} matching the actual
+// stored format, and Content-Type is sniffed by http.ServeFile from the bytes.
+func spritesheetSuffix(data []byte) string {
+	if isWebP(data) {
+		return ".webp"
+	}
+	return ".png"
+}
+
+// spriteAssetName converts a stored blob path back to its public asset
+// filename. Blobs land at .../<hash>.png or .../<hash>.webp, so the URL
+// extension follows whatever was actually persisted.
+func spriteAssetName(blobPath string) string {
+	switch strings.ToLower(filepath.Ext(blobPath)) {
+	case ".webp":
+		return "sprite.webp"
+	default:
+		return "sprite.png"
+	}
+}
+
+// isAcceptedAssetName allow-lists the filename component of /assets/<id>/<name>.
+// Both PNG and WebP variants are valid for the sprite payload so peers can
+// download whatever was originally uploaded.
+func isAcceptedAssetName(name string) bool {
+	switch name {
+	case "sprite.png", "sprite.webp", "sprite.json", "config.json":
+		return true
+	default:
+		return false
+	}
 }
 
 func fileHash(data []byte) string {
