@@ -104,16 +104,19 @@ impl PeerWindowManager {
         let scale = scale_millis as f64 / 1000.0;
         let width = PEER_WIDTH * scale;
         let height = PEER_HEIGHT * scale;
-        let labels: Vec<(String, String)> = {
+        let entries: Vec<(String, usize)> = {
             let map = self.open.lock().await;
-            map.keys()
-                .map(|peer_id| (peer_id.clone(), window_label(peer_id)))
+            let mut ids: Vec<&String> = map.keys().collect();
+            ids.sort();
+            ids.iter()
+                .enumerate()
+                .map(|(slot, peer_id)| (window_label(peer_id), slot))
                 .collect()
         };
-        for (peer_id, label) in labels {
+        for (label, slot) in entries {
             if let Some(win) = app.get_webview_window(&label) {
                 let _ = win.set_size(LogicalSize::new(width, height));
-                let (x, y) = position_for_peer(app, &peer_id, scale_millis);
+                let (x, y) = position_for_peer(app, scale_millis, slot);
                 let _ = win.set_position(LogicalPosition::new(x, y));
             }
         }
@@ -126,15 +129,18 @@ impl PeerWindowManager {
     /// callers don't need to plumb it through.
     pub async fn reposition_all(&self, app: &AppHandle) {
         let scale_millis = self.scale_millis.load(Ordering::Relaxed);
-        let labels: Vec<(String, String)> = {
+        let entries: Vec<(String, usize)> = {
             let map = self.open.lock().await;
-            map.keys()
-                .map(|peer_id| (peer_id.clone(), window_label(peer_id)))
+            let mut ids: Vec<&String> = map.keys().collect();
+            ids.sort();
+            ids.iter()
+                .enumerate()
+                .map(|(slot, peer_id)| (window_label(peer_id), slot))
                 .collect()
         };
-        for (peer_id, label) in labels {
+        for (label, slot) in entries {
             if let Some(win) = app.get_webview_window(&label) {
-                let (x, y) = position_for_peer(app, &peer_id, scale_millis);
+                let (x, y) = position_for_peer(app, scale_millis, slot);
                 let _ = win.set_position(LogicalPosition::new(x, y));
             }
         }
@@ -174,6 +180,9 @@ impl PeerWindowManager {
                 }
             }
         }
+
+        let topology_changed =
+            !to_close.is_empty() || !to_open.is_empty() || !to_replace.is_empty();
 
         for peer_id in to_close {
             self.close_window(app, &peer_id).await;
@@ -225,6 +234,14 @@ impl PeerWindowManager {
                 PeerStateEvent { peer_id, state },
             );
         }
+
+        // A peer joining or leaving shifts every other peer's slot index, so
+        // re-anchor the whole set whenever the topology changed. (Newly
+        // opened windows already opened at their final slot, but existing
+        // siblings need to slide.)
+        if topology_changed {
+            self.reposition_all(app).await;
+        }
     }
 
     async fn open_window(&self, app: &AppHandle, snap: PeerSnapshot) {
@@ -254,8 +271,10 @@ impl PeerWindowManager {
         cached: CachedAssets,
     ) {
         // Insert into map BEFORE opening the window so get_peer_init() sees
-        // it the moment the JS calls in.
-        {
+        // it the moment the JS calls in. Compute the slot under the same
+        // lock so the new window opens at its final position with no flash.
+        let scale_millis = self.scale_millis.load(Ordering::Relaxed);
+        let slot = {
             let mut map = self.open.lock().await;
             map.insert(
                 snap.peer_id.clone(),
@@ -272,15 +291,12 @@ impl PeerWindowManager {
                     },
                 },
             );
-        }
+            slot_for(&map, &snap.peer_id)
+        };
 
-        if let Err(e) = build_peer_window(
-            app,
-            &snap.peer_id,
-            &cached,
-            self.scale_millis.load(Ordering::Relaxed),
-        )
-        .await
+        let (x, y) = position_for_peer(app, scale_millis, slot);
+        if let Err(e) =
+            build_peer_window(app, &snap.peer_id, &cached, scale_millis, x, y).await
         {
             eprintln!("could not open peer window for {}: {}", snap.peer_id, e);
             // Roll back the map entry on failure.
@@ -328,6 +344,8 @@ async fn build_peer_window(
     peer_id: &str,
     _cached: &CachedAssets,
     scale_millis: u16,
+    x: f64,
+    y: f64,
 ) -> tauri::Result<()> {
     let label = window_label(peer_id);
     if app.get_webview_window(&label).is_some() {
@@ -336,7 +354,6 @@ async fn build_peer_window(
     let scale = scale_millis as f64 / 1000.0;
     let width = PEER_WIDTH * scale;
     let height = PEER_HEIGHT * scale;
-    let (x, y) = position_for_peer(app, peer_id, scale_millis);
     let url = format!("peer.html#{}", urlencoding(peer_id));
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("Eggs Peer")
@@ -356,12 +373,13 @@ async fn build_peer_window(
     Ok(())
 }
 
-/// Place each peer at a deterministic offset from the local pet window so
-/// reconnects don't shuffle peers around. The offset scales with the local
-/// pet so peers stay visually clustered when the user shrinks/grows the
-/// avatar. Falls back to current monitor's origin when the local pet hasn't
-/// been measured yet.
-fn position_for_peer(app: &AppHandle, peer_id: &str, scale_millis: u16) -> (f64, f64) {
+/// Always place peers immediately to the right of the local pet window
+/// with bottoms aligned. For multiple peers, sort lexicographically by
+/// `peer_id` and stack them right-ward (slot 0 = closest to local pet,
+/// slot 1 = one cell further right, ...). The same `peer_id` always lands
+/// in the same slot relative to its siblings, so reconnects don't
+/// re-shuffle existing peers.
+fn position_for_peer(app: &AppHandle, scale_millis: u16, slot_index: usize) -> (f64, f64) {
     let scale = scale_millis as f64 / 1000.0;
     let pet_w = PEER_WIDTH * scale;
     let pet_h = PEER_HEIGHT * scale;
@@ -379,14 +397,23 @@ fn position_for_peer(app: &AppHandle, peer_id: &str, scale_millis: u16) -> (f64,
     let (screen_w, screen_h) =
         primary_monitor_size(app, scale_factor).unwrap_or((1440.0, 900.0));
 
-    let h = stable_hash(peer_id);
-    let gap = 16.0; // small constant gap so pets stay clustered at any scale
-    let side = if h & 1 == 0 { pet_w + gap } else { -(pet_w + gap) };
-    let dx = ((h >> 1) as i64 % 41 - 20) as f64; // -20..20
-    let dy = ((h >> 9) as i64 % 41 - 20) as f64;
-    let x = (anchor_x + side + dx).clamp(0.0, (screen_w - pet_w).max(0.0));
-    let y = (anchor_y + dy).clamp(40.0, (screen_h - pet_h - 24.0).max(40.0));
+    const GAP: f64 = 16.0;
+    let dx = (pet_w + GAP) * (slot_index as f64 + 1.0);
+    // Same outer y as the local pet → bottoms align (both windows are
+    // PEER_WIDTH x PEER_HEIGHT at the cached local scale).
+    let x = (anchor_x + dx).clamp(0.0, (screen_w - pet_w).max(0.0));
+    let y = anchor_y.clamp(40.0, (screen_h - pet_h - 24.0).max(40.0));
     (x, y)
+}
+
+/// Slot index of `peer_id` in the lexicographic ordering of currently
+/// open peers (caller holds the `open` lock). Used to keep the same
+/// physical position stable across reconnects: a peer's position only
+/// shifts if a peer with a smaller id joins or leaves.
+fn slot_for(map: &HashMap<String, OpenPeer>, peer_id: &str) -> usize {
+    let mut ids: Vec<&String> = map.keys().collect();
+    ids.sort();
+    ids.iter().position(|id| **id == peer_id).unwrap_or(0)
 }
 
 fn primary_monitor_size(app: &AppHandle, scale_factor: f64) -> Option<(f64, f64)> {
@@ -396,14 +423,6 @@ fn primary_monitor_size(app: &AppHandle, scale_factor: f64) -> Option<(f64, f64)
         size.width as f64 / scale_factor,
         size.height as f64 / scale_factor,
     ))
-}
-
-fn stable_hash(s: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
 }
 
 fn urlencoding(s: &str) -> String {
