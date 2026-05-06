@@ -179,10 +179,34 @@ impl PeerWindowManager {
             self.close_window(app, &peer_id).await;
         }
         for snap in to_replace {
-            // Replace = close then open. Atlas swap mid-animation is rare
-            // enough (peer changes pet) that a flash is acceptable.
+            // Download the new atlas BEFORE touching the existing window so
+            // the peer doesn't blink off-screen during a sprite swap. If the
+            // download fails (server hiccup, peer's sprite still propagating
+            // through the upload pipeline), keep the old window visible —
+            // the next `peer_sprite_changed` (or a re-snapshot on reconnect)
+            // will retry.
+            let cached = match remote_assets::ensure_remote_assets(
+                &snap.sprite_url,
+                &snap.json_url,
+                snap.config_url.as_deref(),
+            )
+            .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "peer asset download failed for {} (keeping previous sprite): {}",
+                        snap.peer_id, e
+                    );
+                    continue;
+                }
+            };
+            // Download succeeded — close the old window and rebuild with the
+            // already-cached assets. Atlas swap mid-animation is rare enough
+            // (peer changes pet) that a tiny close/open flash is acceptable;
+            // a true in-place atlas swap would need a peer.js protocol.
             self.close_window(app, &snap.peer_id).await;
-            self.open_window(app, snap).await;
+            self.open_window_with_cached(app, snap, cached).await;
         }
         for snap in to_open {
             self.open_window(app, snap).await;
@@ -217,7 +241,18 @@ impl PeerWindowManager {
                 return;
             }
         };
+        self.open_window_with_cached(app, snap, cached).await;
+    }
 
+    /// Same as `open_window` but the caller already has the assets cached
+    /// (used by `sync` so a peer mid-swap stays on-screen until the new
+    /// atlas is fully downloaded).
+    async fn open_window_with_cached(
+        &self,
+        app: &AppHandle,
+        snap: PeerSnapshot,
+        cached: CachedAssets,
+    ) {
         // Insert into map BEFORE opening the window so get_peer_init() sees
         // it the moment the JS calls in.
         {

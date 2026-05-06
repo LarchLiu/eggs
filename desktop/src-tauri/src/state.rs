@@ -85,31 +85,22 @@ pub fn set_state(name: &str) -> io::Result<()> {
 
 pub fn set_pet(id: &str) -> io::Result<()> {
     // If remote is enabled, push the new pet's assets to the backend BEFORE
-    // we touch state.json. The running GUI's state-poller (remote.rs) sends
-    // a `{"type":"sprite", ...}` ws message as soon as it sees the pet field
-    // change; the server silently drops that message if no sprite record
-    // exists for (device, name), so peers would keep showing the old sprite.
-    // Uploading first closes that race. Mirrors
-    // egg_desktop.py:set_sprite → ensure_remote_sprite_uploaded.
+    // we touch state.json — and refuse the swap if upload fails. The running
+    // GUI's state-poller (remote.rs) sends a `{"type":"sprite",...}` ws
+    // message as soon as it sees the pet field change; the server silently
+    // drops that message if no sprite record exists for (device, name), so
+    // peers would keep showing the old sprite. By gating the local swap on
+    // upload success we keep local + peer views in lockstep: either both
+    // move to the new pet, or neither does.
     let remote = crate::remote::read_remote_config();
     if remote.enabled {
-        match crate::client::read_client_config() {
-            Ok(client) => {
-                if let Err(e) = crate::upload::ensure_pet_uploaded_blocking(
-                    &remote.server_url,
-                    &client.device_id,
-                    id,
-                ) {
-                    eprintln!("warning: remote sprite upload failed for '{id}': {e}");
-                    eprintln!(
-                        "warning: peers may keep the previous sprite until the upload succeeds"
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("warning: cannot read client.json for remote upload: {e}");
-            }
-        }
+        let client = crate::client::read_client_config().map_err(|e| {
+            io::Error::other(format!("cannot read client.json for remote upload: {e}"))
+        })?;
+        crate::upload::ensure_pet_uploaded_blocking(&remote.server_url, &client.device_id, id)
+            .map_err(|e| {
+                io::Error::other(format!("remote sprite upload failed for '{id}': {e}"))
+            })?;
     }
 
     let mut s = read_state().unwrap_or_else(|_| default_state());

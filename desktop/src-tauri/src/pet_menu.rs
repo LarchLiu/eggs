@@ -117,11 +117,13 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
     }
 
     if let Some(pet_id) = id.strip_prefix(PET_PREFIX) {
-        let _ = update_state(|current| RuntimeState {
-            pet: pet_id.to_string(),
-            state: current.state,
-            scale_millis: current.scale_millis,
-        });
+        // Route through state::set_pet so the same upload-then-swap gate
+        // that the CLI uses also applies to the right-click menu. If remote
+        // is enabled and the upload fails, we leave state.json untouched
+        // and log the error instead of silently dropping peers' view of us.
+        if let Err(e) = state::set_pet(pet_id) {
+            eprintln!("pet menu: failed to switch to '{pet_id}': {e}");
+        }
         return;
     }
 

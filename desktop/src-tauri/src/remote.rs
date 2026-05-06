@@ -119,15 +119,18 @@ pub fn update_remote_config<F: FnOnce(&mut RemoteConfig)>(f: F) -> std::io::Resu
     Ok(cfg)
 }
 
-/// Reconnect signature. Includes the active sprite (from state.json) so
-/// `eggs pet <id>` triggers a reconnect with the new sprite name.
-fn config_signature(cfg: &RemoteConfig, sprite: &str) -> String {
+/// Reconnect signature. Server URL, mode, and room only — local sprite
+/// changes are now handled in-place via a `{"type":"sprite",...}` message
+/// over the existing WS (the server's hub.updateClientSprite hot-swaps
+/// the binding and broadcasts `peer_sprite_changed`), so swapping pets
+/// must NOT tear down the room or matchmaking.
+fn config_signature(cfg: &RemoteConfig) -> String {
     if !cfg.enabled {
         return "off".to_string();
     }
     format!(
-        "on|{}|{}|{}|{}",
-        cfg.server_url, cfg.mode, cfg.room, sprite
+        "on|{}|{}|{}",
+        cfg.server_url, cfg.mode, cfg.room
     )
 }
 
@@ -442,6 +445,11 @@ async fn run_actor(
     let mut next_heartbeat: Option<Instant> = None;
     let mut reconnect_delay = RECONNECT_INITIAL_SECS;
     let mut last_status_payload: Option<String> = None;
+    // Name of the sprite we last successfully ran ensure_pet_uploaded for on
+    // the current `cfg.server_url`. Used to skip a redundant hash-skip GET
+    // when the connect block already uploaded this exact sprite on the same
+    // tick, and reset on signature drift since a new server may not have it.
+    let mut last_uploaded_sprite: String = String::new();
 
     let emit_if_changed = |status: &RemoteStatus, last: &mut Option<String>, app: &AppHandle| {
         let payload = serde_json::to_string(status).unwrap_or_default();
@@ -476,7 +484,7 @@ async fn run_actor(
         }
         let current_sprite = last_state.pet.clone();
 
-        let signature = config_signature(&cfg, &current_sprite);
+        let signature = config_signature(&cfg);
 
         // --- handle config changes ---
         if signature != current_signature {
@@ -488,6 +496,9 @@ async fn run_actor(
             peer_windows.sync(&app, &peers).await;
             current_signature = signature.clone();
             reconnect_delay = RECONNECT_INITIAL_SECS;
+            // The new server (if URL changed) may not have this sprite
+            // uploaded; force a re-check on next connect.
+            last_uploaded_sprite.clear();
             let status = build_status(&cfg, &current_sprite, false, cfg.enabled, "");
             emit_if_changed(&status, &mut last_status_payload, &app);
             if !cfg.enabled {
@@ -537,7 +548,9 @@ async fn run_actor(
             match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &current_sprite)
                 .await
             {
-                Ok(_) => {}
+                Ok(_) => {
+                    last_uploaded_sprite = current_sprite.clone();
+                }
                 Err(e) => {
                     let retryable = e.is_retryable();
                     let msg = format!("pet upload failed: {e}");
@@ -581,8 +594,65 @@ async fn run_actor(
             }
         }
 
+        // --- in-place sprite swap: upload before announcing ---
+        //
+        // Mid-session pet switches no longer drop the WS (we just push a
+        // `{"type":"sprite",...}` message below and let the server hot-swap
+        // the binding via hub.updateClientSprite + broadcast
+        // `peer_sprite_changed`). The server validates that the new sprite
+        // is uploaded for this device first, so we must run the hash-skip
+        // upload here too. `state::set_pet` (CLI + menu path) already does
+        // this synchronously before writing state.json, so on the warm path
+        // `last_uploaded_sprite` matches and this is a no-op; the branch is
+        // defense-in-depth for legacy callers that write state.json directly
+        // (e.g. the Python egg_desktop.py shipped with older skill versions).
+        if pending_sprite_announce
+            && session.is_some()
+            && !current_sprite.is_empty()
+            && current_sprite != last_uploaded_sprite
+        {
+            let device_id = match read_client_config() {
+                Ok(c) => c.device_id,
+                Err(e) => {
+                    eprintln!("remote: client.json read failed mid-session: {e}");
+                    tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+                    continue;
+                }
+            };
+            match crate::upload::ensure_pet_uploaded(
+                &cfg.server_url,
+                &device_id,
+                &current_sprite,
+            )
+            .await
+            {
+                Ok(_) => {
+                    last_uploaded_sprite = current_sprite.clone();
+                }
+                Err(e) => {
+                    let retryable = e.is_retryable();
+                    let msg = format!("pet upload failed: {e}");
+                    let status = build_status(&cfg, &current_sprite, true, retryable, &msg);
+                    emit_if_changed(&status, &mut last_status_payload, &app);
+                    if retryable {
+                        tokio::time::sleep(Duration::from_secs_f64(reconnect_delay)).await;
+                        reconnect_delay =
+                            (reconnect_delay * RECONNECT_BACKOFF).min(RECONNECT_MAX_SECS);
+                    } else {
+                        // Permanent (e.g. pet folder missing). Drop the
+                        // announce so the loop doesn't spin; peers stay on
+                        // the previous sprite until the user fixes the
+                        // underlying issue and switches pet again.
+                        pending_sprite_announce = false;
+                    }
+                    continue;
+                }
+            }
+        }
+
         // --- send pending outbound ---
         if let Some(s) = session.as_mut() {
+            let outgoing_is_sprite = pending_sprite_announce;
             let outgoing = if pending_sprite_announce {
                 Some(json!({
                     "type": "sprite",
@@ -609,6 +679,16 @@ async fn run_actor(
                         pending_state_sync = false;
                         next_heartbeat =
                             Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
+                        // Re-emit status after a sprite swap so the frontend's
+                        // `RemoteStatus.sprite` field reflects the new pet
+                        // (without this, the in-place swap path no longer
+                        // hits the signature-drift emit at the top of the
+                        // loop, and the status would stay stale).
+                        if outgoing_is_sprite {
+                            let status =
+                                build_status(&cfg, &current_sprite, true, false, "");
+                            emit_if_changed(&status, &mut last_status_payload, &app);
+                        }
                     }
                     Err(e) => {
                         // Connection probably broken; let recv loop confirm.
