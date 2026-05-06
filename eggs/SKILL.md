@@ -158,8 +158,10 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
 - The launcher itself (`./eggs` / `eggs.cmd`) is committed to the skill; the binary it caches is not. The launcher reuses any `eggs` already on `$PATH` (e.g. when the user installed the standalone Eggs.app GUI) before falling back to download.
 
-## Notes For Codex
+## Notes For Agents
 
 If the user types `/eggs` or asks to spawn the companion, run `./eggs start` immediately (use `eggs.cmd` on Windows) and briefly report whether it launched. If the user asks to change companion state, run the `state` command with the closest matching state name. Do not open or explain the launcher unless launch fails.
 
-The first `./eggs` invocation downloads ~20 MB and caches it; report progress to the user only if the download takes more than a few seconds.
+The first `./eggs` invocation downloads ~10 MB and caches it; report progress to the user only if the download takes more than a few seconds.
+
+`./eggs start` and `./eggs restart` must be launched from an unsandboxed shell. On macOS the GUI has to attach to WindowServer (and on Linux to the X / Wayland session); if the parent shell blocks those desktop / IPC services, the process still spawns and a PID file gets written — `./eggs status` will report it as running — but the transparent window never reaches the screen. In Claude Code that means setting `dangerouslyDisableSandbox: true` on the Bash tool call that runs `start` / `restart`; in other harnesses, use the equivalent unsandboxed mode. Pure state-mutation commands (`state`, `pet`, `remote`, `install`, `stop`, `status`) are safe to run sandboxed since they only read or write JSON under `~/.eggs/`.
