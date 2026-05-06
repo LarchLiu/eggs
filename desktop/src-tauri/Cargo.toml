@@ -37,3 +37,14 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Fast iteration profile: same runtime behavior as `release` but no LTO and
+# more codegen units, so it builds in seconds instead of minutes. Slightly
+# larger binary, no perceptible runtime cost for this app.
+#   cargo build --profile release-fast
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 2
+strip = false

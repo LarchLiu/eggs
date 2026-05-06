@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Convenience wrapper for the Tauri desktop pet build.
+#
+# Usage:
+#   ./desktop/dev                    fast-iteration release build (default)
+#   ./desktop/dev fast               same as above
+#   ./desktop/dev release            full optimized release (LTO, opt-level=s)
+#   ./desktop/dev debug              cargo build (no --release)
+#   ./desktop/dev check              cargo check (fastest, no codegen)
+#   ./desktop/dev clean              cargo clean
+#   ./desktop/dev run [args...]      build (fast) then exec the binary
+#   ./desktop/dev stop               eggs stop  (uses whatever binary exists)
+#   ./desktop/dev restart [args...]  eggs stop, then run
+#   ./desktop/dev test               cargo check + go test ./... in server/
+#
+# Examples:
+#   ./desktop/dev run remote
+#   ./desktop/dev run pet noir-webling
+#   ./desktop/dev restart remote room ABCD
+
+set -euo pipefail
+
+cd "$(dirname "$0")/src-tauri"
+
+# Pick whichever binary exists, preferring the fast profile so `run` after
+# `dev fast` (the default) finds it without a rebuild loop.
+locate_bin() {
+    for p in target/release-fast/eggs target/release/eggs target/debug/eggs; do
+        if [[ -x "$p" ]]; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+mode="${1:-fast}"
+[[ $# -gt 0 ]] && shift
+
+case "$mode" in
+    fast|release-fast)
+        cargo build --profile release-fast "$@"
+        echo "built: target/release-fast/eggs"
+        ;;
+    release)
+        cargo build --release "$@"
+        echo "built: target/release/eggs"
+        ;;
+    debug)
+        cargo build "$@"
+        echo "built: target/debug/eggs"
+        ;;
+    check)
+        cargo check "$@"
+        ;;
+    clean)
+        cargo clean
+        ;;
+    run)
+        cargo build --profile release-fast
+        exec ./target/release-fast/eggs "$@"
+        ;;
+    stop)
+        bin=$(locate_bin) || { echo "no eggs binary built yet" >&2; exit 1; }
+        exec "$bin" stop
+        ;;
+    restart)
+        bin=$(locate_bin) || { echo "no eggs binary built yet" >&2; exit 1; }
+        "$bin" stop || true
+        cargo build --profile release-fast
+        exec ./target/release-fast/eggs "$@"
+        ;;
+    test)
+        cargo check
+        ( cd "$(dirname "$0")/../../server" && go test ./... )
+        ;;
+    -h|--help|help)
+        sed -n '2,20p' "$0"
+        ;;
+    *)
+        echo "unknown mode: $mode" >&2
+        sed -n '2,20p' "$0" >&2
+        exit 2
+        ;;
+esac

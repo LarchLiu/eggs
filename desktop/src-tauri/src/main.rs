@@ -19,6 +19,7 @@ mod cli;
 mod client;
 mod peers;
 mod pet;
+mod pid;
 mod remote;
 mod remote_assets;
 mod state;
@@ -117,6 +118,13 @@ fn main() {
             get_peer_init,
         ])
         .setup(move |app| {
+            // Publish our PID so `eggs stop` (and other tooling) can find us.
+            // Stale PIDs from crashy exits are tolerated: stop falls back to
+            // `kill -0` to detect liveness before sending SIGTERM.
+            if let Err(e) = pid::write_self() {
+                eprintln!("warning: could not write eggs.pid: {e}");
+            }
+
             let win = app
                 .get_webview_window("pet")
                 .expect("pet window is configured in tauri.conf.json");
@@ -157,6 +165,7 @@ fn main() {
     app.run(move |_app, event| {
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             shutdown_for_run.store(true, Ordering::Relaxed);
+            pid::clear();
         }
     });
 }

@@ -91,6 +91,7 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
             }
         },
         "remote" => run_remote_subcommand(argv),
+        "stop" => run_stop_subcommand(),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -146,8 +147,39 @@ fn print_help() {
     eprintln!("  eggs install <dir>    copy <dir>/{{pet.json,spritesheet.webp}}");
     eprintln!("                        into ~/.codex/pets/<id>/");
     eprintln!("  eggs status           show current pet + state");
+    eprintln!("  eggs stop             SIGTERM the running GUI (SIGKILL after 3s)");
     eprintln!("  eggs remote ...       multiplayer (see `eggs remote help`)");
     eprintln!("  eggs help             show this help");
+}
+
+// ---------- stop subcommand --------------------------------------------
+
+/// Mirrors egg_desktop.py:stop_background — read ~/.codex/eggs/eggs.pid,
+/// SIGTERM the GUI, escalate to SIGKILL if it doesn't exit within 3s, and
+/// clear the PID file. Returns 0 even if no GUI was running, matching the
+/// Python "is not running" path.
+fn run_stop_subcommand() -> i32 {
+    let pid = match crate::pid::read() {
+        Some(p) => p,
+        None => {
+            println!("eggs is not running");
+            return 0;
+        }
+    };
+    if !crate::pid::is_alive(pid) {
+        crate::pid::clear();
+        println!("eggs is not running (cleared stale pid {pid})");
+        return 0;
+    }
+    let stopped = crate::pid::terminate(pid, std::time::Duration::from_secs(3));
+    crate::pid::clear();
+    if stopped {
+        println!("stopped eggs (pid {pid})");
+        0
+    } else {
+        eprintln!("warning: pid {pid} still alive after SIGKILL");
+        1
+    }
 }
 
 // ---------- remote subcommand ------------------------------------------
