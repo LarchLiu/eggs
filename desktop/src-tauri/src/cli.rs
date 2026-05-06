@@ -99,6 +99,7 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
         "remote" => run_remote_subcommand(argv),
         "start" => run_start_subcommand(),
         "stop" => run_stop_subcommand(),
+        "uninstall-cli" => run_uninstall_cli_subcommand(),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -147,6 +148,8 @@ fn print_help() {
     eprintln!("  eggs start            fork a detached background GUI and exit,");
     eprintln!("                        printing its pid (alias of egg_desktop.py:start)");
     eprintln!("  eggs stop             SIGTERM the running GUI (SIGKILL after 3s)");
+    eprintln!("  eggs uninstall-cli    remove the symlink / PATH entry created on first");
+    eprintln!("                        GUI launch (does not touch ~/.eggs/ or the app)");
     eprintln!("  eggs state <name>     switch animation state");
     eprintln!("                        (idle, running-right, running-left,");
     eprintln!("                         waving, jumping, failed, waiting,");
@@ -213,6 +216,23 @@ fn run_stop_subcommand() -> i32 {
         eprintln!("warning: pid {pid} still alive after SIGKILL");
         1
     }
+}
+
+// ---------- uninstall-cli subcommand -----------------------------------
+
+/// Reverses the auto-CLI-install that runs on first GUI launch. Removes only
+/// our own symlink / PATH entry; leaves `~/.eggs/` and the app bundle alone.
+/// Always returns 0 — "nothing to remove" is success, not an error.
+fn run_uninstall_cli_subcommand() -> i32 {
+    let removed = crate::cli_install::run_uninstall();
+    if removed.is_empty() {
+        println!("nothing to uninstall (no CLI residue found)");
+    } else {
+        for line in removed {
+            println!("{line}");
+        }
+    }
+    0
 }
 
 // ---------- remote subcommand ------------------------------------------

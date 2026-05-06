@@ -16,6 +16,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cli;
+mod cli_install;
 mod client;
 mod peers;
 mod pet;
@@ -145,6 +146,13 @@ fn main() {
             get_peer_init,
         ])
         .setup(move |app| {
+            // Best-effort: if launched from a packaged install (.app on macOS,
+            // Program Files on Windows), wire `eggs` into a shell-visible
+            // location so the user can run subcommands from the terminal
+            // without manually managing PATH. Idempotent and silent on
+            // success; never blocks GUI launch.
+            cli_install::auto_install();
+
             // Publish our PID so `eggs stop` (and other tooling) can find us.
             // Stale PIDs from crashy exits are tolerated: stop falls back to
             // `kill -0` to detect liveness before sending SIGTERM.
