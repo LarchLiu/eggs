@@ -3,13 +3,14 @@ REM Eggs skill launcher (Windows) — no Python required.
 REM
 REM Mirrors the POSIX `eggs` script next to it: download-on-first-use, cache
 REM in %USERPROFILE%\.eggs\bin\eggs.exe, exec on every subsequent call.
-REM Periodically re-verifies the cache against the server's SHA256SUMS so a
-REM new release gets picked up automatically.
+REM Periodically compares the hash recorded at download time against the
+REM server's latest SHA256SUMS so a new release gets picked up automatically;
+REM no local sha tool is needed (PowerShell only fetches sums + parses).
 REM
 REM Override:
 REM   EGGS_RELEASE_URL       base URL, defaults to GitHub Releases
 REM   EGGS_BIN_DIR           cache directory, defaults to %USERPROFILE%\.eggs\bin
-REM   EGGS_VERIFY_INTERVAL   seconds between sha256 checks, default 600
+REM   EGGS_VERIFY_INTERVAL   seconds between SHA256SUMS checks, default 600
 REM   EGGS_SKIP_VERIFY=1     always trust the cache (offline / CI)
 
 setlocal enabledelayedexpansion
@@ -20,6 +21,7 @@ if "%RELEASE_URL%"=="" set "RELEASE_URL=https://github.com/larchliu/eggs/release
 set "BIN_DIR=%EGGS_BIN_DIR%"
 if "%BIN_DIR%"=="" set "BIN_DIR=%USERPROFILE%\.eggs\bin"
 set "CACHE=%BIN_DIR%\eggs.exe"
+set "EXPECTED_HASH_FILE=%BIN_DIR%\eggs.sha256"
 set "VERIFIED_MARKER=%BIN_DIR%\.verified"
 set "VERIFY_INTERVAL=%EGGS_VERIFY_INTERVAL%"
 if "%VERIFY_INTERVAL%"=="" set "VERIFY_INTERVAL=600"
@@ -38,32 +40,34 @@ if exist "%CACHE%" (
         exit /b !ERRORLEVEL!
     )
 
-    REM Verify cache hash against server SHA256SUMS.
-    REM   exit 0 = match, 1 = mismatch, 2 = inconclusive (net/parse error).
-    powershell -NoProfile -Command ^
-        "$ErrorActionPreference='Stop';" ^
-        "try {" ^
-        "  $local = (Get-FileHash -Path '%CACHE%' -Algorithm SHA256).Hash.ToLower();" ^
-        "  $sums  = (Invoke-WebRequest -Uri '%RELEASE_URL%/SHA256SUMS' -UseBasicParsing).Content;" ^
-        "  $line  = ($sums -split \"`n\") | Where-Object { $_ -match ('\s' + [regex]::Escape('%ASSET%') + '\s*$') } | Select-Object -First 1;" ^
-        "  if (-not $line) { exit 2 }" ^
-        "  $expected = ($line -split '\s+')[0].ToLower();" ^
-        "  if ($local -eq $expected) { exit 0 } else { exit 1 }" ^
-        "} catch { exit 2 }"
-    set "VERIFY_RC=!ERRORLEVEL!"
+    REM Fetch the server's expected hash for our asset. Empty result means
+    REM the SHA256SUMS request failed or the asset wasn't listed.
+    set "SERVER_HASH="
+    for /f "delims=" %%H in ('powershell -NoProfile -Command "$asset='%ASSET%'; try { $s = (Invoke-WebRequest '%RELEASE_URL%/SHA256SUMS' -UseBasicParsing).Content; foreach ($l in ($s -split [char]10)) { $p = $l -split '\s+', 2; if ($p.Count -eq 2 -and $p[1].Trim() -eq $asset) { $p[0].Trim().ToLower(); break } } } catch { }"') do set "SERVER_HASH=%%H"
 
-    if "!VERIFY_RC!"=="0" (
+    if "!SERVER_HASH!"=="" (
+        echo eggs: version check unavailable, using cached binary >&2
+        "%CACHE%" %*
+        exit /b !ERRORLEVEL!
+    )
+
+    set "STORED_HASH="
+    if exist "%EXPECTED_HASH_FILE%" (
+        for /f "tokens=1 delims= " %%S in (%EXPECTED_HASH_FILE%) do set "STORED_HASH=%%S"
+    )
+
+    if /i "!STORED_HASH!"=="!SERVER_HASH!" (
         if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
         type nul > "%VERIFIED_MARKER%"
         "%CACHE%" %*
         exit /b !ERRORLEVEL!
     )
-    if "!VERIFY_RC!"=="2" (
-        echo eggs: version check unavailable, using cached binary >&2
-        "%CACHE%" %*
-        exit /b !ERRORLEVEL!
+
+    if "!STORED_HASH!"=="" (
+        echo eggs: no recorded hash for cached binary; re-downloading >&2
+    ) else (
+        echo eggs: cached binary differs from latest release; re-downloading >&2
     )
-    echo eggs: cached binary differs from latest release; re-downloading >&2
     REM Fall through to re-download.
 )
 
@@ -95,8 +99,7 @@ if %ERRORLEVEL% == 0 (
         exit /b !ERRORLEVEL!
     )
 ) else (
-    powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest -Uri '%URL%' -OutFile '%CACHE%.tmp' -UseBasicParsing } catch { exit 1 }"
+    powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%URL%' -OutFile '%CACHE%.tmp' -UseBasicParsing } catch { exit 1 }"
     if !ERRORLEVEL! NEQ 0 (
         del /q "%CACHE%.tmp" >nul 2>nul
         echo eggs: download failed >&2
@@ -105,6 +108,16 @@ if %ERRORLEVEL% == 0 (
 )
 
 move /y "%CACHE%.tmp" "%CACHE%" >nul
+
+REM Record server's expected hash for future verifies. Best-effort: if the
+REM SHA256SUMS request fails here, leave the hash file absent and the next
+REM launch will trigger another download attempt once SHA256SUMS is reachable.
+set "FRESH_HASH="
+for /f "delims=" %%H in ('powershell -NoProfile -Command "$asset='%ASSET%'; try { $s = (Invoke-WebRequest '%RELEASE_URL%/SHA256SUMS' -UseBasicParsing).Content; foreach ($l in ($s -split [char]10)) { $p = $l -split '\s+', 2; if ($p.Count -eq 2 -and $p[1].Trim() -eq $asset) { $p[0].Trim().ToLower(); break } } } catch { }"') do set "FRESH_HASH=%%H"
+if not "!FRESH_HASH!"=="" (
+    > "%EXPECTED_HASH_FILE%" echo !FRESH_HASH!
+)
+
 type nul > "%VERIFIED_MARKER%"
 echo eggs: cached at %CACHE% >&2
 "%CACHE%" %*
