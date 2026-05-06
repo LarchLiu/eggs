@@ -585,11 +585,19 @@ func TestWebSocketRoomBroadcastAndIsolation(t *testing.T) {
 
 	a := dialTestWS(t, ts.URL, "device-a", "dino", "room", "ABC")
 	defer a.Close()
+	// First frame on join is always a room_snapshot; for the lone occupant of
+	// a fresh room it lists no peers.
+	if snap := readJSONFrame(t, a); snap["type"] != "room_snapshot" {
+		t.Fatalf("a: expected initial room_snapshot, got %#v", snap)
+	}
 	writeJSONFrame(t, a, map[string]any{"type": "state", "state": "walk"})
 	b := dialTestWS(t, ts.URL, "device-b", "goblin", "room", "ABC")
 	defer b.Close()
 	c := dialTestWS(t, ts.URL, "device-c", "cat", "room", "XYZ")
 	defer c.Close()
+	if snap := readJSONFrame(t, c); snap["type"] != "room_snapshot" {
+		t.Fatalf("c: expected initial room_snapshot, got %#v", snap)
+	}
 
 	joined := readJSONFrame(t, a)
 	if joined["type"] != "peer_joined" {
@@ -618,13 +626,12 @@ func TestWebSocketRoomBroadcastAndIsolation(t *testing.T) {
 	if existing["state"] != "walk" {
 		t.Fatalf("snapshot should include current state: %#v", snapshot)
 	}
-	msg := readJSONFrame(t, b)
-	if msg["type"] != "peer_state" || msg["state"] != "walk" {
-		t.Fatalf("unexpected state message: %#v", msg)
-	}
-	stateSprite, _ := msg["sprite"].(map[string]any)
-	if stateSprite["name"] != "dino" {
-		t.Fatalf("unexpected state sprite: %#v", msg)
+	// The snapshot already carries the current state of every peer (see
+	// peerMessage in main.go), so the join handshake does not also emit a
+	// separate peer_state frame. Verify b stays quiet until something else
+	// happens, and that c (in an isolated room) never sees ABC traffic.
+	if got := readJSONFrameWithTimeout(t, b, 120*time.Millisecond); got != nil {
+		t.Fatalf("b received unexpected post-snapshot frame: %#v", got)
 	}
 	if got := readJSONFrameWithTimeout(t, c, 120*time.Millisecond); got != nil {
 		t.Fatalf("isolated room received message: %#v", got)
