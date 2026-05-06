@@ -34,14 +34,25 @@
   const BY_STATE = Object.fromEntries(LAYOUT.map((r) => [r.state, r]));
 
   class PetView {
-    constructor(el) {
+    constructor(el, scale = 1.0) {
       this.el = el;
       this.row = LAYOUT[0];
       this.frame = 0;
       this.timer = null;
-      el.style.width = `${CELL_W}px`;
-      el.style.height = `${CELL_H}px`;
+      this.scale = scale;
+      this.applyScale();
       this.tick();
+    }
+    applyScale() {
+      const w = Math.round(CELL_W * this.scale);
+      const h = Math.round(CELL_H * this.scale);
+      this.el.style.width = `${w}px`;
+      this.el.style.height = `${h}px`;
+      this.el.style.backgroundSize = `${CELL_W * 8 * this.scale}px ${CELL_H * 9 * this.scale}px`;
+    }
+    setScale(scale) {
+      this.scale = scale;
+      this.applyScale();
     }
     setSheet(url) {
       this.el.style.backgroundImage = `url("${url}")`;
@@ -53,8 +64,10 @@
       this.frame = 0;
     }
     tick() {
-      const x = -this.frame * CELL_W;
-      const y = -this.row.row * CELL_H;
+      const w = Math.round(CELL_W * this.scale);
+      const h = Math.round(CELL_H * this.scale);
+      const x = -this.frame * w;
+      const y = -this.row.row * h;
       this.el.style.backgroundPosition = `${x}px ${y}px`;
       const dur = this.row.durations[this.frame] ?? 150;
       this.timer = setTimeout(() => {
@@ -81,7 +94,7 @@
     }
 
     const el = document.getElementById("pet");
-    const pet = new PetView(el);
+    const pet = new PetView(el, 1.0);
 
     let init;
     try {
@@ -90,12 +103,24 @@
       console.error(`get_peer_init(${peerId}) failed:`, e);
       return;
     }
+    if (typeof init.scale_millis === "number") {
+      pet.setScale(init.scale_millis / 1000);
+    }
     if (init.sprite_path_abs) {
       pet.setSheet(convertFileSrc(init.sprite_path_abs));
     }
     if (init.state) {
       pet.setState(init.state);
     }
+
+    // Local pet's scale changes (via context menu → state.json) are pushed
+    // here by the main-window state poller; keep peers visually consistent.
+    await listen("peer-scale", (evt) => {
+      const ms = typeof evt.payload === "number"
+        ? evt.payload
+        : (evt.payload && evt.payload.scale_millis) || 1000;
+      pet.setScale(ms / 1000);
+    });
 
     // The remote actor emits remote-peers globally on every change. Filter to
     // our own peer and update animation state.

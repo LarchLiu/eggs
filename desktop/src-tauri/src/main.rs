@@ -172,14 +172,48 @@ fn main() {
 
             app.manage(pet_menu::PetMenuStore::new());
 
-            // Poll ~/.eggs/state.json and emit changes to the webview.
+            // Peer window manager — owns transparent per-peer overlays. Shared
+            // between the remote actor (which feeds it peer snapshots), the
+            // state poller (scale changes), the pet-window move listener
+            // (drag → reposition), and the get_peer_init command.
+            let peer_windows: SharedPeerWindowManager = Arc::new(PeerWindowManager::new());
+            app.manage(peer_windows.clone());
+            // Seed the manager's cached scale from disk so the first peer that
+            // arrives is built at the right size, even before any user-driven
+            // scale change.
+            if let Ok(current) = state::read_state() {
+                let app_handle = win.app_handle().clone();
+                let mgr = peer_windows.clone();
+                let scale_ms = current.scale_millis;
+                tauri::async_runtime::spawn(async move {
+                    mgr.apply_scale(&app_handle, scale_ms).await;
+                });
+            }
+
+            // Poll ~/.eggs/state.json and emit changes to the webview. When
+            // scale_millis changes, also push the new scale to peer windows
+            // (resize + reposition + emit `peer-scale` for peer.js).
             let win_for_poller = win.clone();
+            let app_handle_for_poller = win.app_handle().clone();
+            let peer_windows_for_poller = peer_windows.clone();
             std::thread::spawn(move || {
                 let mut last: Option<state::RuntimeState> = None;
                 loop {
                     if let Ok(current) = state::read_state() {
                         if last.as_ref() != Some(&current) {
+                            let scale_changed = last
+                                .as_ref()
+                                .map(|l| l.scale_millis != current.scale_millis)
+                                .unwrap_or(true);
                             let _ = win_for_poller.emit("state-changed", &current);
+                            if scale_changed {
+                                let app = app_handle_for_poller.clone();
+                                let mgr = peer_windows_for_poller.clone();
+                                let scale_ms = current.scale_millis;
+                                tauri::async_runtime::spawn(async move {
+                                    mgr.apply_scale(&app, scale_ms).await;
+                                });
+                            }
                             last = Some(current);
                         }
                     }
@@ -187,11 +221,21 @@ fn main() {
                 }
             });
 
-            // Peer window manager — owns transparent per-peer overlays. Shared
-            // between the remote actor (which feeds it peer snapshots) and the
-            // get_peer_init command (which the peer.html JS calls on load).
-            let peer_windows: SharedPeerWindowManager = Arc::new(PeerWindowManager::new());
-            app.manage(peer_windows.clone());
+            // Drag tracking: when the local pet window moves, anchor every
+            // open peer window to the new position. `Moved` fires per OS
+            // notification (~60Hz on macOS during a drag); each spawn is a
+            // fire-and-forget set_position per peer.
+            let app_handle_for_move = win.app_handle().clone();
+            let peer_windows_for_move = peer_windows.clone();
+            win.on_window_event(move |event| {
+                if let tauri::WindowEvent::Moved(_) = event {
+                    let app = app_handle_for_move.clone();
+                    let mgr = peer_windows_for_move.clone();
+                    tauri::async_runtime::spawn(async move {
+                        mgr.reposition_all(&app).await;
+                    });
+                }
+            });
 
             // Spawn the remote-multiplayer actor (ws + reconnect + heartbeats).
             remote::start(app.handle().clone(), shutdown_for_setup.clone(), peer_windows);
