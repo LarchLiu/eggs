@@ -60,7 +60,7 @@ git -C $root add `
     desktop/src-tauri/Cargo.toml `
     desktop/src-tauri/tauri.conf.json `
     desktop/src-tauri/Cargo.lock
-git -C $root commit -m "v$Version"
+git -C $root commit -m "chore: release v$Version"
 git -C $root tag "v$Version"
 
 $branch = (git -C $root rev-parse --abbrev-ref HEAD).Trim()

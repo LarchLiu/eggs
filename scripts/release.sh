@@ -58,7 +58,7 @@ git -C "$root" add \
     desktop/src-tauri/Cargo.toml \
     desktop/src-tauri/tauri.conf.json \
     desktop/src-tauri/Cargo.lock
-git -C "$root" commit -m "v$new"
+git -C "$root" commit -m "chore: release v$new"
 git -C "$root" tag "v$new"
 
 branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
