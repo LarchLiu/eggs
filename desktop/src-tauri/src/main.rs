@@ -264,15 +264,15 @@ fn main() {
     });
 }
 
-fn initial_pet_position(app: &tauri::App, window_width: f64, window_height: f64) -> Option<(f64, f64)> {
+fn initial_pet_position(app: &tauri::App, _window_width: f64, _window_height: f64) -> Option<(f64, f64)> {
+    // Anchor at the top-left of the primary work area: peer windows are
+    // stacked to the right with bottoms aligned (see peers::position_for_peer),
+    // so a top-left anchor leaves the entire screen width available for peers
+    // and keeps everything on-screen at any scale factor.
     let monitor = app.primary_monitor().ok().flatten()?;
     let work_area = monitor.work_area();
     let margin = 20.0;
-    let min_x = work_area.position.x as f64;
-    let min_y = work_area.position.y as f64;
-    let max_x = min_x + work_area.size.width as f64 - window_width;
-    let max_y = min_y + work_area.size.height as f64 - window_height;
-    let x = (max_x - margin).max(min_x);
-    let y = (max_y - margin).max(min_y);
+    let x = work_area.position.x as f64 + margin;
+    let y = work_area.position.y as f64 + margin;
     Some((x, y))
 }
