@@ -1,4 +1,6 @@
-// PID file for the running GUI, persisted at ~/.codex/eggs/eggs.pid.
+// PID file for the running GUI, persisted at `<app_dir>/eggs.pid`
+// (see `state::app_dir()` — defaults to `~/.eggs/`, overridable via
+// `EGGS_APP_DIR`).
 //
 // Mirrors egg_desktop.py's read_pid / write_pid / managed_process_alive trio
 // so `eggs stop` can find and SIGTERM the GUI process. The file is written

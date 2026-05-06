@@ -6,7 +6,7 @@
 // (a fresh upload gets a fresh id) so we can use it as the cache directory
 // name. Multiple peers running the same sprite share one cache entry.
 //
-// Layout under ~/.codex/eggs/remote/:
+// Layout under ~/.eggs/remote/:
 //   <sprite_id>/
 //     sprite.png  (or sprite.webp, depending on the original upload)
 //     sprite.json

@@ -1,4 +1,4 @@
-// Runtime state, persisted at ~/.codex/eggs/state.json so external CLIs can
+// Runtime state, persisted at ~/.eggs/state.json so external CLIs can
 // drive the running pet without IPC.
 //
 // Schema (forward compatible with the legacy egg_desktop.py file):
@@ -25,14 +25,14 @@ fn default_state_name() -> String {
     "idle".to_string()
 }
 
+/// Per-user app data directory. Defaults to `~/.eggs` on every platform
+/// (dotfile-style under `dirs::home_dir`, which is `$HOME` on unix and
+/// `%USERPROFILE%` on Windows). Override via `EGGS_APP_DIR`.
 pub fn app_dir() -> PathBuf {
     if let Ok(d) = std::env::var("EGGS_APP_DIR") {
         return PathBuf::from(d);
     }
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".codex")
-        .join("eggs")
+    dirs::home_dir().unwrap_or_default().join(".eggs")
 }
 
 pub fn state_path() -> PathBuf {
@@ -42,7 +42,12 @@ pub fn state_path() -> PathBuf {
 pub fn read_state() -> io::Result<RuntimeState> {
     let path = state_path();
     if !path.exists() {
-        return Ok(default_state());
+        // First launch: persist a default state.json so the file is visible to
+        // external tooling (CLI subcommands, Python egg_desktop.py) and the
+        // pet poller's "did this change?" check has a stable starting point.
+        let s = default_state();
+        let _ = write_state(&s);
+        return Ok(s);
     }
     let text = fs::read_to_string(&path)?;
     let mut s: RuntimeState = serde_json::from_str(&text)
@@ -100,11 +105,7 @@ pub fn set_pet(id: &str) -> io::Result<()> {
 
     let mut s = read_state().unwrap_or_else(|_| default_state());
     s.pet = id.to_string();
-    write_state(&s)?;
-    // Keep remote.json::sprite in sync so the next ws (re)connect announces
-    // the right pet to peers, mirroring egg_desktop.py:sync_remote_sprite.
-    let _ = crate::remote::update_remote_config(|c| c.sprite = id.to_string());
-    Ok(())
+    write_state(&s)
 }
 
 fn default_state() -> RuntimeState {

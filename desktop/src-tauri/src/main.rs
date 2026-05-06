@@ -2,7 +2,7 @@
 //
 // One binary, two roles:
 //   * `eggs`            -> launch the transparent overlay (GUI mode).
-//   * `eggs <subcmd>`   -> mutate ~/.codex/eggs/state.json (CLI mode) and exit.
+//   * `eggs <subcmd>`   -> mutate ~/.eggs/state.json (CLI mode) and exit.
 //
 // When a CLI invocation lands while the GUI is already running, the
 // single-instance plugin forwards argv to the running process; the running
@@ -86,10 +86,12 @@ async fn get_peer_init(
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
 
-    // CLI fast-path: anything other than `start` (or no arg) is treated as a
-    // sub-command that mutates state and exits without spawning a window.
+    // CLI fast-path: any subcommand (including `start`, which forks a detached
+    // GUI and exits) goes through cli::run_subcommand. Only a bare `eggs` (no
+    // args) or the explicit `eggs run` foreground form falls through to the
+    // tauri::Builder below.
     if let Some(sub) = argv.get(1).map(String::as_str) {
-        if sub != "start" && !sub.is_empty() {
+        if sub != "run" && !sub.is_empty() {
             std::process::exit(cli::run_subcommand(&argv));
         }
     }
@@ -133,7 +135,7 @@ fn main() {
             // while the user holds Cmd / Ctrl to drag.
             let _ = win.set_ignore_cursor_events(true);
 
-            // Poll ~/.codex/eggs/state.json and emit changes to the webview.
+            // Poll ~/.eggs/state.json and emit changes to the webview.
             let win_for_poller = win.clone();
             std::thread::spawn(move || {
                 let mut last: Option<state::RuntimeState> = None;

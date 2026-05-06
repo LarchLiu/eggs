@@ -1,4 +1,4 @@
-// Anonymous device identity, persisted at ~/.codex/eggs/client.json.
+// Anonymous device identity, persisted at ~/.eggs/client.json.
 //
 // Schema (matches the legacy egg_desktop.py file):
 //   { "device_id": "<uuid hex>" }

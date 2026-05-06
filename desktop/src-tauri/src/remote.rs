@@ -2,7 +2,7 @@
 //
 // Mirrors the protocol that lives in eggs/scripts/egg_desktop.py:RemoteSession
 // and talks to the Go server at server/main.go. A single tokio task owns the
-// websocket lifetime, polls ~/.codex/eggs/remote.json for config changes
+// websocket lifetime, polls ~/.eggs/remote.json for config changes
 // (reconnects on signature drift), polls state.json for pet/state changes
 // (pushes to the wire), and emits Tauri events ("remote-status" /
 // "remote-peers") so the webview can render presence.
@@ -36,6 +36,12 @@ const POLL_INTERVAL_MS: u64 = 200;
 
 // ---------- remote.json --------------------------------------------------
 
+// The "active sprite" is intentionally NOT stored here -- state.json::pet is
+// the single source of truth for the pet currently being rendered, and we
+// announce that to the server. Keeping a duplicate in remote.json caused
+// drift bugs when the user swapped pets without going through the path that
+// updated both files.
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RemoteConfig {
     #[serde(default = "default_server_url")]
@@ -46,9 +52,6 @@ pub struct RemoteConfig {
     pub mode: String,
     #[serde(default)]
     pub room: String,
-    /// Pet/sprite name announced to peers. Falls back to state.pet on read.
-    #[serde(default)]
-    pub sprite: String,
 }
 
 fn default_server_url() -> String {
@@ -66,7 +69,6 @@ impl Default for RemoteConfig {
             enabled: false,
             mode: default_mode(),
             room: String::new(),
-            sprite: String::new(),
         }
     }
 }
@@ -99,11 +101,6 @@ pub fn read_remote_config() -> RemoteConfig {
         cfg.mode = "random".to_string();
     }
     cfg.room = cfg.room.trim().to_string();
-    if cfg.sprite.trim().is_empty() {
-        if let Ok(s) = state::read_state() {
-            cfg.sprite = s.pet;
-        }
-    }
     cfg
 }
 
@@ -122,13 +119,15 @@ pub fn update_remote_config<F: FnOnce(&mut RemoteConfig)>(f: F) -> std::io::Resu
     Ok(cfg)
 }
 
-fn config_signature(cfg: &RemoteConfig) -> String {
+/// Reconnect signature. Includes the active sprite (from state.json) so
+/// `eggs pet <id>` triggers a reconnect with the new sprite name.
+fn config_signature(cfg: &RemoteConfig, sprite: &str) -> String {
     if !cfg.enabled {
         return "off".to_string();
     }
     format!(
         "on|{}|{}|{}|{}",
-        cfg.server_url, cfg.mode, cfg.room, cfg.sprite
+        cfg.server_url, cfg.mode, cfg.room, sprite
     )
 }
 
@@ -144,8 +143,8 @@ struct Session {
 }
 
 impl Session {
-    async fn connect(cfg: &RemoteConfig, device_id: &str) -> Result<Self, String> {
-        let url = build_ws_url(cfg, device_id).map_err(|e| e.to_string())?;
+    async fn connect(cfg: &RemoteConfig, device_id: &str, sprite: &str) -> Result<Self, String> {
+        let url = build_ws_url(cfg, device_id, sprite).map_err(|e| e.to_string())?;
         let (stream, _resp) = tokio_tungstenite::connect_async(url.as_str())
             .await
             .map_err(|e| e.to_string())?;
@@ -189,7 +188,7 @@ impl Session {
     }
 }
 
-fn build_ws_url(cfg: &RemoteConfig, device_id: &str) -> Result<url::Url, String> {
+fn build_ws_url(cfg: &RemoteConfig, device_id: &str, sprite: &str) -> Result<url::Url, String> {
     let parsed = url::Url::parse(&cfg.server_url).map_err(|e| e.to_string())?;
     let scheme = match parsed.scheme() {
         "https" => "wss",
@@ -208,7 +207,7 @@ fn build_ws_url(cfg: &RemoteConfig, device_id: &str) -> Result<url::Url, String>
         q.append_pair("device_id", device_id);
         q.append_pair("mode", &cfg.mode);
         q.append_pair("room", &cfg.room);
-        q.append_pair("sprite", &cfg.sprite);
+        q.append_pair("sprite", sprite);
     }
     Ok(url)
 }
@@ -265,6 +264,7 @@ pub struct PeerSnapshot {
 
 fn build_status(
     cfg: &RemoteConfig,
+    sprite: &str,
     connected: bool,
     reconnecting: bool,
     error: &str,
@@ -277,7 +277,7 @@ fn build_status(
         server_url: cfg.server_url.clone(),
         mode: cfg.mode.clone(),
         room: cfg.room.clone(),
-        sprite: cfg.sprite.clone(),
+        sprite: sprite.to_string(),
     }
 }
 
@@ -460,7 +460,22 @@ async fn run_actor(
         }
 
         let cfg = read_remote_config();
-        let signature = config_signature(&cfg);
+
+        // Read state.json once per tick: it's the source of truth for the
+        // current sprite (state.pet) and the animation state we announce. The
+        // remote actor never persists or caches sprite separately, so a
+        // `eggs pet <id>` from the CLI is picked up automatically.
+        if let Ok(cur) = state::read_state() {
+            if cur.pet != last_state.pet {
+                pending_sprite_announce = true;
+            } else if cur.state != last_state.state {
+                pending_state_sync = true;
+            }
+            last_state = cur;
+        }
+        let current_sprite = last_state.pet.clone();
+
+        let signature = config_signature(&cfg, &current_sprite);
 
         // --- handle config changes ---
         if signature != current_signature {
@@ -472,7 +487,7 @@ async fn run_actor(
             peer_windows.sync(&app, &peers).await;
             current_signature = signature.clone();
             reconnect_delay = RECONNECT_INITIAL_SECS;
-            let status = build_status(&cfg, false, cfg.enabled, "");
+            let status = build_status(&cfg, &current_sprite, false, cfg.enabled, "");
             emit_if_changed(&status, &mut last_status_payload, &app);
             if !cfg.enabled {
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
@@ -490,18 +505,25 @@ async fn run_actor(
             let device_id = match read_client_config() {
                 Ok(c) => c.device_id,
                 Err(e) => {
-                    let status = build_status(&cfg, false, false, &format!("client.json: {e}"));
+                    let status = build_status(
+                        &cfg,
+                        &current_sprite,
+                        false,
+                        false,
+                        &format!("client.json: {e}"),
+                    );
                     emit_if_changed(&status, &mut last_status_payload, &app);
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
             };
-            if cfg.sprite.is_empty() {
+            if current_sprite.is_empty() {
                 let status = build_status(
                     &cfg,
+                    &current_sprite,
                     false,
                     false,
-                    "no pet/sprite configured (run: eggs pet <id>)",
+                    "no pet configured (run: eggs pet <id>)",
                 );
                 emit_if_changed(&status, &mut last_status_payload, &app);
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
@@ -511,14 +533,14 @@ async fn run_actor(
             // Hash-skip upload before connecting. The Go server's WS handshake
             // refuses unknown sprites for the device, so this is mandatory the
             // first time a pet is announced. On the warm path it's one GET.
-            match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &cfg.sprite)
+            match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &current_sprite)
                 .await
             {
                 Ok(_) => {}
                 Err(e) => {
                     let retryable = e.is_retryable();
                     let msg = format!("pet upload failed: {e}");
-                    let status = build_status(&cfg, false, retryable, &msg);
+                    let status = build_status(&cfg, &current_sprite, false, retryable, &msg);
                     emit_if_changed(&status, &mut last_status_payload, &app);
                     if retryable {
                         tokio::time::sleep(Duration::from_secs_f64(reconnect_delay)).await;
@@ -532,19 +554,19 @@ async fn run_actor(
                 }
             }
 
-            match Session::connect(&cfg, &device_id).await {
+            match Session::connect(&cfg, &device_id, &current_sprite).await {
                 Ok(s) => {
                     session = Some(s);
                     pending_sprite_announce = true;
                     pending_state_sync = true;
                     next_heartbeat = Some(Instant::now());
                     reconnect_delay = RECONNECT_INITIAL_SECS;
-                    let status = build_status(&cfg, true, false, "");
+                    let status = build_status(&cfg, &current_sprite, true, false, "");
                     emit_if_changed(&status, &mut last_status_payload, &app);
                 }
                 Err(e) => {
                     let permanent = is_permanent_error(&e);
-                    let status = build_status(&cfg, false, !permanent, &e);
+                    let status = build_status(&cfg, &current_sprite, false, !permanent, &e);
                     emit_if_changed(&status, &mut last_status_payload, &app);
                     if permanent {
                         // Stay disabled-ish until the user changes config.
@@ -556,16 +578,6 @@ async fn run_actor(
                     continue;
                 }
             }
-        }
-
-        // --- detect state.json deltas ---
-        if let Ok(cur) = state::read_state() {
-            if cur.pet != last_state.pet {
-                pending_sprite_announce = true;
-            } else if cur.state != last_state.state {
-                pending_state_sync = true;
-            }
-            last_state = cur;
         }
 
         // --- send pending outbound ---
@@ -636,7 +648,7 @@ async fn run_actor(
             emit_peers(&app, &peers);
             peer_windows.sync(&app, &peers).await;
             let permanent = is_permanent_error(&reason);
-            let status = build_status(&cfg, false, !permanent, &reason);
+            let status = build_status(&cfg, &current_sprite, false, !permanent, &reason);
             emit_if_changed(&status, &mut last_status_payload, &app);
             if permanent {
                 tokio::time::sleep(Duration::from_secs(60)).await;

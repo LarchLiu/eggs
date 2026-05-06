@@ -41,7 +41,7 @@ impl std::fmt::Display for UploadError {
         match self {
             UploadError::PetNotInstalled(id) => write!(
                 f,
-                "pet '{id}' is not installed under ~/.codex/pets/ (use `eggs install <dir>` or hatch-pet)"
+                "pet '{id}' is not installed under ~/.eggs/pets/ or ~/.codex/pets/ (use `eggs install <dir>` or hatch-pet)"
             ),
             UploadError::Io(e) => write!(f, "io error: {e}"),
             UploadError::Http(e) => write!(f, "http error: {e}"),
@@ -130,19 +130,21 @@ pub async fn ensure_pet_uploaded(
     device_id: &str,
     pet_id: &str,
 ) -> Result<UploadOutcome, UploadError> {
-    let pet_dir = pet::pets_dir().join(pet_id);
-    if !pet_dir.is_dir() {
-        return Err(UploadError::PetNotInstalled(pet_id.to_string()));
-    }
-
-    let manifest_path = pet_dir.join("pet.json");
-    let manifest_bytes = fs::read(&manifest_path)?;
+    // load_pet walks every entry in pet::pets_dirs() and returns the first
+    // matching manifest, so the caller doesn't need to know which root the
+    // pet lives under (~/.eggs/pets vs the legacy ~/.codex/pets).
     let manifest = pet::load_pet(pet_id)
         .map_err(|_| UploadError::PetNotInstalled(pet_id.to_string()))?;
     let sheet_path = manifest
         .spritesheet_abs
         .clone()
-        .unwrap_or_else(|| pet_dir.join(&manifest.spritesheet_path));
+        .ok_or_else(|| UploadError::PetNotInstalled(pet_id.to_string()))?;
+    let pet_dir = sheet_path
+        .parent()
+        .ok_or_else(|| UploadError::PetNotInstalled(pet_id.to_string()))?
+        .to_path_buf();
+    let manifest_path = pet_dir.join("pet.json");
+    let manifest_bytes = fs::read(&manifest_path)?;
     if !sheet_path.exists() {
         return Err(UploadError::PetNotInstalled(pet_id.to_string()));
     }

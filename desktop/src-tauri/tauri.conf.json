@@ -32,8 +32,9 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
+          "$HOME/.eggs/pets/**",
           "$HOME/.codex/pets/**",
-          "$HOME/.codex/eggs/remote/**"
+          "$HOME/.eggs/remote/**"
         ]
       }
     }
