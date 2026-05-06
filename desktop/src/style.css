@@ -24,6 +24,7 @@ body {
   /* Preserve the chunky pixel-art look on retina / scaled displays. */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  cursor: grab;
 }
 
 #pet[data-grab="true"] {

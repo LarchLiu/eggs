@@ -36,6 +36,7 @@
     { state: "running",       row: 7, frames: 6, durations: [120, 120, 120, 120, 120, 220] },
     { state: "review",        row: 8, frames: 6, durations: [150, 150, 150, 150, 150, 280] },
   ];
+  const STATES = LAYOUT.map((row) => row.state);
   const BY_STATE = Object.fromEntries(LAYOUT.map((r) => [r.state, r]));
 
   class PetView {
@@ -44,9 +45,24 @@
       this.row = LAYOUT[0];
       this.frame = 0;
       this.timer = null;
-      el.style.width = `${CELL_W}px`;
-      el.style.height = `${CELL_H}px`;
+      this.scale = 1.0;
+      this.applyScale();
       this.tick();
+    }
+
+    applyScale() {
+      const displayW = Math.round(CELL_W * this.scale);
+      const displayH = Math.round(CELL_H * this.scale);
+      document.documentElement.style.setProperty("--cell-w", `${displayW}px`);
+      document.documentElement.style.setProperty("--cell-h", `${displayH}px`);
+      this.el.style.width = `${displayW}px`;
+      this.el.style.height = `${displayH}px`;
+      this.el.style.backgroundSize = `${CELL_W * 8 * this.scale}px ${CELL_H * 9 * this.scale}px`;
+    }
+
+    setScale(scale) {
+      this.scale = scale;
+      this.applyScale();
     }
 
     setSheet(url) {
@@ -61,8 +77,10 @@
     }
 
     tick() {
-      const x = -this.frame * CELL_W;
-      const y = -this.row.row * CELL_H;
+      const displayW = Math.round(CELL_W * this.scale);
+      const displayH = Math.round(CELL_H * this.scale);
+      const x = -this.frame * displayW;
+      const y = -this.row.row * displayH;
       this.el.style.backgroundPosition = `${x}px ${y}px`;
       const dur = this.row.durations[this.frame] ?? 150;
       this.timer = setTimeout(() => {
@@ -75,8 +93,13 @@
   async function main() {
     const el = document.getElementById("pet");
     const pet = new PetView(el);
+    el.dataset.grab = "false";
 
-    let current = { pet: "", state: "idle" };
+    let current = { pet: "", state: "idle", scale_millis: 1000 };
+
+    function scaleFromMillis(scaleMillis) {
+      return scaleMillis / 1000;
+    }
 
     async function loadPet(id) {
       if (!id) return;
@@ -98,8 +121,19 @@
     } catch (e) {
       console.warn("read_state failed, using defaults", e);
     }
+    pet.setScale(scaleFromMillis(current.scale_millis ?? 1000));
     await loadPet(current.pet);
     pet.setState(current.state);
+
+    try {
+      const rustStates = await invoke("list_states");
+      const missing = rustStates.filter((name) => !STATES.includes(name));
+      if (missing.length > 0) {
+        console.warn("frontend LAYOUT missing states from Rust:", missing);
+      }
+    } catch (e) {
+      console.warn("list_states failed", e);
+    }
 
     // React to state.json changes (CLI subcommands or external editors).
     await listen("state-changed", async (evt) => {
@@ -111,60 +145,41 @@
       if (next.state !== current.state) {
         pet.setState(next.state);
       }
+      if (next.scale_millis !== current.scale_millis) {
+        pet.setScale(scaleFromMillis(next.scale_millis));
+      }
       current = next;
     });
 
-    // Drag-with-modifier: by default the window is click-through so the
-    // desktop and apps below stay interactive. Holding Cmd (macOS) or Ctrl
-    // (Win/Linux) toggles click-through off so the user can grab the pet.
-    const isMac = navigator.platform.toLowerCase().includes("mac");
     const win = getCurrentWindow();
-    let modifierActive = false;
-
-    async function setClickThrough(on) {
-      try {
-        await invoke("set_click_through", { on });
-        el.dataset.grab = on ? "false" : "true";
-      } catch (e) {
-        console.warn("set_click_through failed", e);
-      }
-    }
-
-    function modifierFromEvent(e) {
-      return isMac ? !!e.metaKey : !!e.ctrlKey;
-    }
-
-    window.addEventListener("keydown", async (e) => {
-      const mod = modifierFromEvent(e);
-      if (mod && !modifierActive) {
-        modifierActive = true;
-        await setClickThrough(false);
-      }
-    });
-    window.addEventListener("keyup", async (e) => {
-      const mod = modifierFromEvent(e);
-      if (!mod && modifierActive) {
-        modifierActive = false;
-        await setClickThrough(true);
-      }
-    });
 
     window.addEventListener("mousedown", async (e) => {
-      if (modifierFromEvent(e)) {
+      if (e.button === 0) {
+        el.dataset.grab = "true";
         try {
           await win.startDragging();
         } catch (err) {
           console.warn("startDragging failed", err);
+          el.dataset.grab = "false";
         }
       }
     });
 
-    // Right-click cycles through states for sanity testing during dev.
-    window.addEventListener("contextmenu", (e) => {
+    window.addEventListener("mouseup", () => {
+      el.dataset.grab = "false";
+    });
+    window.addEventListener("mouseleave", () => {
+      el.dataset.grab = "false";
+    });
+
+    window.addEventListener("contextmenu", async (e) => {
       e.preventDefault();
-      const idx = LAYOUT.indexOf(pet.row);
-      const next = LAYOUT[(idx + 1) % LAYOUT.length];
-      pet.setState(next.state);
+      el.dataset.grab = "false";
+      try {
+        await invoke("show_context_menu");
+      } catch (err) {
+        console.warn("show_context_menu failed", err);
+      }
     });
 
     // Remote multiplayer events. Visual rendering of peers is a follow-up;

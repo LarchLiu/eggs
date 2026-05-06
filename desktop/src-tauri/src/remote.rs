@@ -435,6 +435,7 @@ async fn run_actor(
     let mut last_state = state::read_state().unwrap_or_else(|_| state::RuntimeState {
         pet: String::new(),
         state: "idle".to_string(),
+        scale_millis: 1000,
     });
     let mut pending_sprite_announce = false;
     let mut pending_state_sync = false;

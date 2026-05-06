@@ -19,6 +19,7 @@ mod cli;
 mod client;
 mod peers;
 mod pet;
+mod pet_menu;
 mod pid;
 mod remote;
 mod remote_assets;
@@ -28,18 +29,18 @@ mod upload;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, RunEvent};
 
 use peers::{PeerInit, PeerWindowManager, SharedPeerWindowManager};
 
 #[tauri::command]
-fn set_click_through(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
-    window.set_ignore_cursor_events(on).map_err(|e| e.to_string())
+fn list_pets() -> Result<Vec<pet::PetInfo>, String> {
+    pet::list_installed_pets().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn list_pets() -> Result<Vec<pet::PetInfo>, String> {
-    pet::list_installed_pets().map_err(|e| e.to_string())
+fn list_states() -> Vec<String> {
+    pet_menu::list_states()
 }
 
 #[tauri::command]
@@ -58,6 +59,20 @@ fn write_state(state: state::RuntimeState) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_scale(window: tauri::WebviewWindow, scale_millis: u16) -> Result<(), String> {
+    let clamped = match scale_millis {
+        400 | 500 | 600 | 800 | 1000 => scale_millis,
+        _ => 1000,
+    };
+    let scale = (clamped as f64) / 1000.0;
+    let width = 192.0 * scale;
+    let height = 208.0 * scale;
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn read_remote_config() -> remote::RemoteConfig {
     remote::read_remote_config()
 }
@@ -70,6 +85,14 @@ fn write_remote_config(config: remote::RemoteConfig) -> Result<(), String> {
 #[tauri::command]
 fn quit(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[tauri::command]
+fn show_context_menu(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    pet_menu::show_context_menu(&app, &window)
 }
 
 #[tauri::command]
@@ -109,14 +132,16 @@ fn main() {
             cli::run_in_running_instance(app, argv);
         }))
         .invoke_handler(tauri::generate_handler![
-            set_click_through,
             list_pets,
+            list_states,
             load_pet,
             read_state,
             write_state,
+            set_scale,
             read_remote_config,
             write_remote_config,
             quit,
+            show_context_menu,
             get_peer_init,
         ])
         .setup(move |app| {
@@ -131,9 +156,21 @@ fn main() {
                 .get_webview_window("pet")
                 .expect("pet window is configured in tauri.conf.json");
 
-            // Default to click-through; the webview asks Rust to flip it off
-            // while the user holds Cmd / Ctrl to drag.
-            let _ = win.set_ignore_cursor_events(true);
+            if let Ok(current) = state::read_state() {
+                let clamped = match current.scale_millis {
+                    400 | 500 | 600 | 800 | 1000 => current.scale_millis,
+                    _ => 1000,
+                };
+                let scale = (clamped as f64) / 1000.0;
+                let width = 192.0 * scale;
+                let height = 208.0 * scale;
+                let _ = win.set_size(LogicalSize::new(width, height));
+                if let Some((x, y)) = initial_pet_position(app, width, height) {
+                    let _ = win.set_position(LogicalPosition::new(x, y));
+                }
+            }
+
+            app.manage(pet_menu::PetMenuStore::new());
 
             // Poll ~/.eggs/state.json and emit changes to the webview.
             let win_for_poller = win.clone();
@@ -165,9 +202,25 @@ fn main() {
         .expect("failed to build eggs desktop");
 
     app.run(move |_app, event| {
+        if let RunEvent::MenuEvent(menu_event) = &event {
+            pet_menu::handle_menu_event(_app, menu_event.id());
+        }
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             shutdown_for_run.store(true, Ordering::Relaxed);
             pid::clear();
         }
     });
+}
+
+fn initial_pet_position(app: &tauri::App, window_width: f64, window_height: f64) -> Option<(f64, f64)> {
+    let monitor = app.primary_monitor().ok().flatten()?;
+    let work_area = monitor.work_area();
+    let margin = 20.0;
+    let min_x = work_area.position.x as f64;
+    let min_y = work_area.position.y as f64;
+    let max_x = min_x + work_area.size.width as f64 - window_width;
+    let max_y = min_y + work_area.size.height as f64 - window_height;
+    let x = (max_x - margin).max(min_x);
+    let y = (max_y - margin).max(min_y);
+    Some((x, y))
 }

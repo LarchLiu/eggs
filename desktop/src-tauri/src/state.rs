@@ -19,10 +19,16 @@ pub struct RuntimeState {
     pub pet: String,
     #[serde(default = "default_state_name")]
     pub state: String,
+    #[serde(default = "default_scale_millis")]
+    pub scale_millis: u16,
 }
 
 fn default_state_name() -> String {
     "idle".to_string()
+}
+
+fn default_scale_millis() -> u16 {
+    1000
 }
 
 /// Per-user app data directory. Defaults to `~/.eggs` on every platform
@@ -57,6 +63,9 @@ pub fn read_state() -> io::Result<RuntimeState> {
     }
     if s.state.is_empty() {
         s.state = default_state().state;
+    }
+    if !matches!(s.scale_millis, 400 | 500 | 600 | 800 | 1000) {
+        s.scale_millis = default_scale_millis();
     }
     Ok(s)
 }
@@ -113,5 +122,6 @@ fn default_state() -> RuntimeState {
     RuntimeState {
         pet,
         state: default_state_name(),
+        scale_millis: default_scale_millis(),
     }
 }
