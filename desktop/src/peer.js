@@ -40,6 +40,12 @@
       this.frame = 0;
       this.timer = null;
       this.scale = scale;
+      // Peers render facing the local pet: they live to the right of the
+      // local sprite (see peers::position_for_peer), so flipping horizontally
+      // makes both pets look at each other and turns "running-right" into
+      // "running toward the user", which reads more naturally for face-to-
+      // face presence.
+      this.el.style.transform = "scaleX(-1)";
       this.applyScale();
       this.tick();
     }
