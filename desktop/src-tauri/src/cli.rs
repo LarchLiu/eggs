@@ -99,6 +99,7 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
         "remote" => run_remote_subcommand(argv),
         "start" => run_start_subcommand(),
         "stop" => run_stop_subcommand(),
+        "restart" => run_restart_subcommand(),
         "uninstall-cli" => run_uninstall_cli_subcommand(),
         "help" | "-h" | "--help" => {
             print_help();
@@ -148,6 +149,7 @@ fn print_help() {
     eprintln!("  eggs start            fork a detached background GUI and exit,");
     eprintln!("                        printing its pid (alias of egg_desktop.py:start)");
     eprintln!("  eggs stop             SIGTERM the running GUI (SIGKILL after 3s)");
+    eprintln!("  eggs restart          stop + start (matches egg_desktop.py)");
     eprintln!("  eggs uninstall-cli    remove the symlink / PATH entry created on first");
     eprintln!("                        GUI launch (does not touch ~/.eggs/ or the app)");
     eprintln!("  eggs state <name>     switch animation state");
@@ -219,6 +221,18 @@ fn run_stop_subcommand() -> i32 {
 }
 
 // ---------- uninstall-cli subcommand -----------------------------------
+
+/// Stop-then-start. Matches egg_desktop.py:restart so SKILL.md keeps a
+/// single name across the Python/Rust transition. Best-effort stop: if the
+/// previous GUI wasn't running, just go straight to start.
+fn run_restart_subcommand() -> i32 {
+    let _ = run_stop_subcommand();
+    // Brief breather so the OS recycles window handles / single-instance lock
+    // before the new GUI tries to claim them. 250ms is empirically enough on
+    // macOS / Linux; harmless on Windows.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    run_start_subcommand()
+}
 
 /// Reverses the auto-CLI-install that runs on first GUI launch. Removes only
 /// our own symlink / PATH entry; leaves `~/.eggs/` and the app bundle alone.

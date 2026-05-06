@@ -1,0 +1,185 @@
+name: release
+
+# Build the `eggs` binary for the four platforms our skill launcher
+# (eggs/eggs and eggs/eggs.cmd) knows how to download, then attach them to
+# the GitHub Release that triggered the run.
+#
+# Asset names match the launcher's `${RELEASE_URL}/<asset>` expectations:
+#   eggs-darwin-universal     macOS arm64 + x86_64 (lipo'd Mach-O)
+#   eggs-linux-x86_64
+#   eggs-linux-arm64
+#   eggs-windows-x86_64.exe
+#
+# Trigger: push a tag like `v0.1.0`. Manual dispatch is also wired so you
+# can rebuild artifacts for an existing release without re-tagging.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to attach artifacts to (must already exist)'
+        required: true
+        type: string
+
+# Avoid overlapping CI runs for the same tag; the second push wins.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # softprops/action-gh-release needs this to upload assets
+
+jobs:
+  # ---------- macOS universal2 (arm64 + x86_64) ------------------------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Build arm64
+        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml --target aarch64-apple-darwin
+      - name: Build x86_64
+        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml --target x86_64-apple-darwin
+      - name: Lipo universal binary
+        run: |
+          lipo -create \
+            desktop/src-tauri/target/aarch64-apple-darwin/release/eggs \
+            desktop/src-tauri/target/x86_64-apple-darwin/release/eggs \
+            -output eggs-darwin-universal
+          file eggs-darwin-universal
+      - name: Smoke test
+        run: ./eggs-darwin-universal help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eggs-darwin-universal
+          path: eggs-darwin-universal
+          if-no-files-found: error
+
+  # ---------- Linux x86_64 ----------------------------------------------
+  build-linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Install Tauri Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev
+      - name: Build
+        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Stage asset
+        run: cp desktop/src-tauri/target/release/eggs eggs-linux-x86_64
+      - name: Smoke test
+        run: ./eggs-linux-x86_64 help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eggs-linux-x86_64
+          path: eggs-linux-x86_64
+          if-no-files-found: error
+
+  # ---------- Linux arm64 -----------------------------------------------
+  # Uses GitHub's free arm64 runner. If your repo doesn't have access to
+  # arm64 runners (some plans / private repos), comment this job out — the
+  # launcher will print a clear "unsupported arch" message on arm64 Linux
+  # and the user can fall back to building from source.
+  build-linux-arm64:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Install Tauri Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev
+      - name: Build
+        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Stage asset
+        run: cp desktop/src-tauri/target/release/eggs eggs-linux-arm64
+      - name: Smoke test
+        run: ./eggs-linux-arm64 help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eggs-linux-arm64
+          path: eggs-linux-arm64
+          if-no-files-found: error
+
+  # ---------- Windows x86_64 --------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Build
+        run: cargo build --release --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Stage asset
+        shell: pwsh
+        run: Copy-Item desktop\src-tauri\target\release\eggs.exe eggs-windows-x86_64.exe
+      - name: Smoke test
+        shell: pwsh
+        run: .\eggs-windows-x86_64.exe help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eggs-windows-x86_64.exe
+          path: eggs-windows-x86_64.exe
+          if-no-files-found: error
+
+  # ---------- Aggregate + publish ---------------------------------------
+  release:
+    needs:
+      - build-macos
+      - build-linux-x86_64
+      - build-linux-arm64
+      - build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Stage release assets
+        run: |
+          mkdir -p staged
+          # download-artifact creates one dir per artifact name; flatten.
+          find artifacts -type f -print -exec mv {} staged/ \;
+          ls -la staged
+      - name: Generate SHA256SUMS
+        run: |
+          cd staged
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            staged/eggs-darwin-universal
+            staged/eggs-linux-x86_64
+            staged/eggs-linux-arm64
+            staged/eggs-windows-x86_64.exe
+            staged/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true

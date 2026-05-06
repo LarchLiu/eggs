@@ -1,0 +1,77 @@
+#!/bin/sh
+# Eggs skill launcher — POSIX shell, no Python required.
+#
+# Downloads the right pre-built `eggs` binary for the current OS/arch on
+# first use, then re-execs from a per-user cache on every subsequent call.
+# The skill ships with this script plus SKILL.md; no binary is committed,
+# nothing else is needed at install time.
+#
+# Layout:
+#   ~/.eggs/bin/eggs        cached binary (chmod +x)
+#
+# Override the release source via:
+#   EGGS_RELEASE_URL        base URL, defaults to GitHub Releases
+#   EGGS_BIN_DIR            cache directory, defaults to ~/.eggs/bin
+#
+# The companion `eggs.cmd` next to this script is the Windows equivalent.
+
+set -eu
+
+RELEASE_URL="${EGGS_RELEASE_URL:-https://github.com/larchliu/eggs/releases/latest/download}"
+BIN_DIR="${EGGS_BIN_DIR:-$HOME/.eggs/bin}"
+CACHE="$BIN_DIR/eggs"
+
+# Fast path: cache hit.
+if [ -x "$CACHE" ]; then
+    exec "$CACHE" "$@"
+fi
+
+# A pre-existing `eggs` on PATH (Eggs.app installed manually, or a previous
+# `cli_install` symlink) is still preferred over re-downloading.
+if command -v eggs >/dev/null 2>&1 && [ "$(command -v eggs)" != "$CACHE" ]; then
+    exec eggs "$@"
+fi
+
+# Map (os, arch) -> release asset filename. macOS ships a single universal
+# Mach-O so we don't care about arm64 vs x86_64 on Mac.
+os="$(uname -s)"
+arch="$(uname -m)"
+case "$os" in
+    Darwin)
+        asset="eggs-darwin-universal"
+        ;;
+    Linux)
+        case "$arch" in
+            x86_64|amd64)  asset="eggs-linux-x86_64" ;;
+            aarch64|arm64) asset="eggs-linux-arm64"  ;;
+            *) echo "eggs: unsupported Linux arch '$arch'" >&2; exit 1 ;;
+        esac
+        ;;
+    *) echo "eggs: unsupported OS '$os' (use eggs.cmd on Windows)" >&2; exit 1 ;;
+esac
+
+download() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --progress-bar -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --show-progress -qO "$2" "$1"
+    else
+        echo "eggs: need curl or wget on PATH to download the binary" >&2
+        return 127
+    fi
+}
+
+mkdir -p "$BIN_DIR"
+url="$RELEASE_URL/$asset"
+tmp="$CACHE.tmp"
+echo "eggs: downloading $url" >&2
+if ! download "$url" "$tmp"; then
+    rm -f "$tmp"
+    echo "eggs: download failed" >&2
+    exit 1
+fi
+chmod +x "$tmp"
+mv "$tmp" "$CACHE"
+echo "eggs: cached at $CACHE" >&2
+
+exec "$CACHE" "$@"

@@ -7,80 +7,91 @@ description: Spawn, stop, change state, or manage a standalone animated 2D deskt
 
 ## Quick Start
 
-When the user asks to spawn the desktop companion, including `/eggs`, run the bundled runtime from this skill directory:
+The skill ships with a tiny launcher (`./eggs` on macOS/Linux, `eggs.cmd` on Windows) that downloads the right pre-built binary on first use and caches it at `~/.eggs/bin/eggs`. No Python, npm, or compiler required at runtime.
+
+When the user asks to spawn the desktop companion, including `/eggs`, run the launcher from this skill directory:
 
 ```bash
-python3 scripts/egg_desktop.py start
+./eggs start            # macOS / Linux
+.\eggs.cmd start        # Windows (PowerShell or cmd)
 ```
 
 When the user asks to stop it:
 
 ```bash
-python3 scripts/egg_desktop.py stop
+./eggs stop
 ```
 
 For status:
 
 ```bash
-python3 scripts/egg_desktop.py status
+./eggs status
 ```
 
-For restart:
+For restart (stop + start):
 
 ```bash
-python3 scripts/egg_desktop.py restart
+./eggs restart
 ```
 
 Remote interaction is opt-in. To connect this skill to a separately deployed remote sprite server:
 
 ```bash
-python3 scripts/egg_desktop.py remote server http://localhost:8787
-python3 scripts/egg_desktop.py remote upload dino
-python3 scripts/egg_desktop.py remote
-python3 scripts/egg_desktop.py remote status
+./eggs remote server http://localhost:8787
+./eggs remote upload dino
+./eggs remote
+./eggs remote status
 ```
 
-`remote` joins the server-side random waiting pool by default (equivalent to `remote random`). After a match is found, the server creates a temporary private room for that pair.
+`remote` joins the server-side random waiting pool by default (equivalent to `remote random`) and also brings the GUI up if it isn't running. After a match is found, the server creates a temporary private room for that pair.
 
 For invite rooms:
 
 ```bash
-python3 scripts/egg_desktop.py remote room ABC123
+./eggs remote room ABC123
 ```
 
 To leave:
 
 ```bash
-python3 scripts/egg_desktop.py remote leave
+./eggs remote leave
 ```
 
 For state changes:
 
 ```bash
-python3 scripts/egg_desktop.py state unborn
-python3 scripts/egg_desktop.py state ready
-python3 scripts/egg_desktop.py state hatching
-python3 scripts/egg_desktop.py state hatched
-python3 scripts/egg_desktop.py state walk
-python3 scripts/egg_desktop.py state sleep
-python3 scripts/egg_desktop.py state eat
-python3 scripts/egg_desktop.py state drink
-python3 scripts/egg_desktop.py state play
-python3 scripts/egg_desktop.py state roar
-python3 scripts/egg_desktop.py state attack
+./eggs state idle
+./eggs state running-right
+./eggs state running-left
+./eggs state waving
+./eggs state jumping
+./eggs state failed
+./eggs state waiting
+./eggs state running
+./eggs state review
 ```
 
-To install a replacement spritesheet:
+To switch active pet (folder name under `~/.eggs/pets/` or the legacy `~/.codex/pets/`):
 
 ```bash
-python3 scripts/egg_desktop.py spritesheet /path/to/dino.png dino
-python3 scripts/egg_desktop.py restart
+./eggs pet noir-webling
+```
+
+To install a pet folder (must contain `pet.json` plus a spritesheet) into `~/.eggs/pets/`:
+
+```bash
+./eggs install /path/to/pet-dir
+```
+
+To uninstall the CLI shim that the GUI's first launch placed in `/usr/local/bin/` or the user PATH:
+
+```bash
+./eggs uninstall-cli
 ```
 
 ## Sprite Tools
 
-Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge desktop companion sprite sheets.
-When tools are run with `--name <sprite>`, they write `<sprite>.png` and `<sprite>.json` to the requested output directory and also install copies to `~/.codex/eggs/<sprite>.png` and `~/.codex/eggs/<sprite>.json`. If extraction is run without `--name`, use the input image stem and write `<input-name>_spritesheet.png/json`.
+Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge desktop companion sprite sheets. When tools are run with `--name <sprite>`, they write `<sprite>.png` and `<sprite>.json` to the requested output directory and also install copies to `~/.eggs/<sprite>.png` and `~/.eggs/<sprite>.json`. If extraction is run without `--name`, use the input image stem and write `<input-name>_spritesheet.png/json`.
 
 Build tools into a temporary location instead of committing platform-specific binaries:
 
@@ -134,29 +145,21 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 
 ## Runtime Behavior
 
-- Use only the bundled `scripts/egg_desktop.py`; it has no third-party Python dependencies.
-- On macOS, the manager compiles and launches the bundled native Swift/Cocoa overlay at first run. This requires `python3` and the macOS Swift compiler, but no npm, Electron, PyPI packages, or external assets.
-- When remote interaction is enabled, the Swift runtime remains the display runtime. A separate Python sidecar handles remote WebSocket sync and writes `~/.codex/eggs/remote-peers.json` for Swift to render remote peers.
-- On non-macOS, the manager falls back to its Python/Tk runtime. If Tkinter is unavailable, report that the local Python build cannot display the fallback GUI.
-- The script launches a detached local GUI process and stores its PID/log under `~/.codex/eggs/`.
-- Re-running `start` should not create duplicates; use `restart` when the user wants a fresh companion.
-- The runtime reads the current sprite and state from `~/.codex/eggs/state.json`.
-- The runtime reads optional user animation names from `~/.codex/eggs/config.json` under `animations.<sprite>.<name>`, where each animation object uses `row` and `loop`.
-- The runtime first looks for a user-installed sprite at `~/.codex/eggs/<sprite>.png` with optional `~/.codex/eggs/<sprite>.json`, then bundled skill assets at `assets/<sprite>.png` and `assets/<sprite>.json`, then falls back to a simple procedural placeholder drawing.
-- Resolve bundled assets relative to this installed skill directory; never rely on the original repo path or any `/Users/...` absolute path.
-- Do not hardcode the frame size. The animation runtime reads `frameWidth` and `frameHeight` from `<sprite>.json` to slice the PNG and size the desktop window. It only falls back to 251x251 if metadata is missing or invalid.
-- The bundled spritesheet currently has 251x251 frames in a 5x11 regular grid.
-- `assets/dino.json` keeps `image` as `dino.png`, relative to the JSON file's own directory. Generated sprite metadata should stay portable in the same way.
-- Without custom config, each row is a state: `unborn`, `ready`, `hatching`, `hatched`, `walk`, `sleep`, `eat`, `drink`, `play`, `roar`, `attack`.
-- With custom config, accept animation names from `config.json`, for example `"idle": { "row": 3, "loop": true }`, `"attackOnce": { "row": 10, "loop": false }`, or `"roar3": { "row": 9, "loop": 3 }`.
-- Chinese state requests are supported through aliases such as `睡觉`, `吃鸡腿`, `喝水`, `玩耍`, `咆哮`, and `攻击`.
-- The `state` and `sprite` commands write `~/.codex/eggs/state.json`; running windows poll it and switch animation rows or sprite assets without restarting.
-- The desktop window can be repositioned by dragging it with the mouse.
-- Remote settings are stored in `~/.codex/eggs/remote.json`, anonymous device identity in `~/.codex/eggs/client.json`, and downloaded remote peer indexes in `~/.codex/eggs/remote/<peer_id>/` with shared blob files under `~/.codex/eggs/remote/blobs/`. Remote cache never overwrites local `<sprite>.png/json`.
-- Remote upload remembers the selected sprite name, and room/random interaction uses `device_id + sprite name` for the live WebSocket session rather than resolving peers through the public sprite detail endpoint.
+- The skill has no Python or compiler dependency at runtime. The launcher (`./eggs` / `eggs.cmd`) is POSIX shell / cmd; it downloads a single self-contained Tauri binary on first use.
+- Override the download source via `EGGS_RELEASE_URL` (defaults to the project's GitHub Releases) and the cache directory via `EGGS_BIN_DIR` (defaults to `~/.eggs/bin`).
+- The binary doubles as GUI and CLI: `eggs` (no args) launches the foreground transparent overlay, `eggs <subcmd>` mutates `~/.eggs/state.json` / `remote.json` and exits. The single-instance plugin forwards `eggs <subcmd>` invocations to a running GUI; the GUI's pollers re-emit `state-changed` / `remote-status` automatically.
+- `eggs start` forks a detached background GUI and exits with its PID; `eggs stop` SIGTERMs the running GUI (SIGKILL after 3s); `eggs restart` is stop + start.
+- Re-running `start` is idempotent — if a GUI is already running, it prints `eggs is already running (pid N)` instead of duplicating.
+- Runtime data lives at `~/.eggs/` (Windows: `C:\Users\<n>\.eggs\`). Override via `EGGS_APP_DIR`. State, remote config, device id, PID file, cached peer assets all share that one folder.
+- Pets live at `~/.eggs/pets/<id>/` (each with `pet.json` + a spritesheet). The runtime also still reads `~/.codex/pets/<id>/` for backward compatibility with the legacy Python skill.
+- The transparent always-on-top window is 192x208 (8x9 atlas with 192x208 cells per the Codex pet contract); the user can rescale via the right-click context menu (0.4x / 0.5x / 0.6x / 0.8x / 1.0x). Peer windows on screen mirror the local scale and follow the local pet during drag.
+- Remote interaction is opt-in. Settings live in `~/.eggs/remote.json`, anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<peer_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
+- Hash-skip upload: when remote is enabled and the user switches pet, the client first POSTs `(sprite_hash, json_hash)` only; the server replies 200 if the row already exists, 201 if the blobs already exist server-side (a fresh row gets registered for this device, zero bytes shipped), or 404 listing missing blobs (client retries phase 2 with bytes).
 - The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
-- Sprite preparation tools are bundled under `tools/`; do not rely on old root-level compiled binaries.
+- The launcher itself (`./eggs` / `eggs.cmd`) is committed to the skill; the binary it caches is not. The launcher reuses any `eggs` already on `$PATH` (e.g. when the user installed the standalone Eggs.app GUI) before falling back to download.
 
 ## Notes For Codex
 
-If the user types `/eggs` or asks to spawn the companion, do the start action immediately and briefly report whether it launched. If the user asks to change companion state, run the `state` command with the closest matching state name. Do not open or explain the script unless launch fails.
+If the user types `/eggs` or asks to spawn the companion, run `./eggs start` immediately (use `eggs.cmd` on Windows) and briefly report whether it launched. If the user asks to change companion state, run the `state` command with the closest matching state name. Do not open or explain the launcher unless launch fails.
+
+The first `./eggs` invocation downloads ~20 MB and caches it; report progress to the user only if the download takes more than a few seconds.
