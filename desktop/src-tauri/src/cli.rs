@@ -171,6 +171,7 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 cfg.sprite = pet_id.clone();
             }) {
                 Ok(cfg) => {
+                    ensure_gui_running();
                     println!(
                         "remote random match pool enabled (server={}, sprite={})",
                         cfg.server_url, cfg.sprite
@@ -207,6 +208,7 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 cfg.sprite = pet_id.clone();
             }) {
                 Ok(cfg) => {
+                    ensure_gui_running();
                     println!(
                         "remote room enabled: {} (server={}, sprite={})",
                         cfg.room, cfg.server_url, cfg.sprite
@@ -312,6 +314,43 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
     }
 }
 
+/// Spawn a detached `eggs` (no-arg) GUI process if one isn't already running.
+/// Mirrors `egg_desktop.py`'s `apply_remote_runtime_change(ensure_running=True)`:
+/// the user's `eggs remote` / `eggs remote room` should also bring up the pet
+/// window when it isn't yet on screen. The single-instance plugin in any
+/// already-running GUI catches the duplicate and the spawned child exits, so
+/// we don't need our own PID file for dedup.
+fn ensure_gui_running() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: could not resolve current_exe to start pet GUI: {e}");
+            return;
+        }
+    };
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // New process group so the child survives the calling shell's SIGHUP.
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+
+    if let Err(e) = cmd.spawn() {
+        eprintln!("warning: could not spawn pet GUI: {e}");
+    }
+}
+
 /// Pick the pet id to upload: prefer remote.json::sprite, fall back to
 /// state.json::pet so a fresh `eggs remote random` works without prior config.
 fn resolve_pet_for_upload() -> Result<String, i32> {
@@ -395,6 +434,8 @@ fn print_remote_help() {
     eprintln!("notes:");
     eprintln!("  * `random` and `room` auto-upload the current pet first; the server");
     eprintln!("    skips body upload when (sprite_hash, json_hash) already match (~1 RTT).");
+    eprintln!("  * `random` and `room` also bring up the pet GUI if it isn't running");
+    eprintln!("    (detached child process; deduped by the single-instance plugin).");
     eprintln!();
     eprintln!("config files (legacy compatible with egg_desktop.py):");
     eprintln!("  ~/.codex/eggs/client.json   anonymous device_id (auto-generated)");
