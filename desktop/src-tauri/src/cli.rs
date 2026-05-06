@@ -394,7 +394,7 @@ fn print_remote_help() {
     eprintln!();
     eprintln!("notes:");
     eprintln!("  * `random` and `room` auto-upload the current pet first; the server");
-    eprintln!("    skips body upload when (png_hash, json_hash) already match (~1 RTT).");
+    eprintln!("    skips body upload when (sprite_hash, json_hash) already match (~1 RTT).");
     eprintln!();
     eprintln!("config files (legacy compatible with egg_desktop.py):");
     eprintln!("  ~/.codex/eggs/client.json   anonymous device_id (auto-generated)");

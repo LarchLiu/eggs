@@ -3,15 +3,15 @@
 // Two-phase POST against /api/v1/sprites:
 //
 //   Phase 1 (hash-only): send device_id + sprite_name + display_name +
-//   png_hash + json_hash as form fields, no file parts. The server either:
+//   sprite_hash + json_hash as form fields, no file parts. The server either:
 //     * 200 OK  -- (device_id, sprite_name, hashes) already exists, reuse row.
 //     * 201 Created -- blobs are already on disk (uploaded by *anyone*); the
 //       server just registers a fresh row for this device. ZERO bytes shipped.
-//     * 404 + {"missing": ["png", "json"]} -- the blobs aren't there yet,
+//     * 404 + {"missing": ["sprite", "json"]} -- the blobs aren't there yet,
 //       client must retry phase 2.
 //     * 4xx -- validation / config / server error.
 //
-//   Phase 2 (full upload): same form plus `png` + `json` file parts. Server
+//   Phase 2 (full upload): same form plus `sprite` + `json` file parts. Server
 //   verifies bytes match the claimed hashes, stores blobs, inserts row.
 //
 // Cross-device dedup: User B's first install of a pet User A already pushed
@@ -148,7 +148,7 @@ pub async fn ensure_pet_uploaded(
     }
     let sheet_bytes = fs::read(&sheet_path)?;
 
-    let png_hash = sha256_hex(&sheet_bytes);
+    let sprite_hash = sha256_hex(&sheet_bytes);
     let json_hash = sha256_hex(&manifest_bytes);
 
     let display_name = if manifest.display_name.is_empty() {
@@ -174,7 +174,7 @@ pub async fn ensure_pet_uploaded(
         device_id,
         pet_id,
         &display_name,
-        &png_hash,
+        &sprite_hash,
         &json_hash,
     )
     .await?;
@@ -189,7 +189,7 @@ pub async fn ensure_pet_uploaded(
         device_id,
         pet_id,
         &display_name,
-        &png_hash,
+        &sprite_hash,
         &json_hash,
         sheet_bytes,
         manifest_bytes,
@@ -204,14 +204,14 @@ async fn phase_one_hash_only(
     device_id: &str,
     pet_id: &str,
     display_name: &str,
-    png_hash: &str,
+    sprite_hash: &str,
     json_hash: &str,
 ) -> Result<Option<UploadOutcome>, UploadError> {
     let form = reqwest::multipart::Form::new()
         .text("device_id", device_id.to_string())
         .text("sprite_name", pet_id.to_string())
         .text("display_name", display_name.to_string())
-        .text("png_hash", png_hash.to_string())
+        .text("sprite_hash", sprite_hash.to_string())
         .text("json_hash", json_hash.to_string());
 
     let resp = client.post(endpoint).multipart(form).send().await?;
@@ -263,7 +263,7 @@ async fn phase_two_full_upload(
     device_id: &str,
     pet_id: &str,
     display_name: &str,
-    png_hash: &str,
+    sprite_hash: &str,
     json_hash: &str,
     sheet_bytes: Vec<u8>,
     manifest_bytes: Vec<u8>,
@@ -288,9 +288,9 @@ async fn phase_two_full_upload(
         .text("device_id", device_id.to_string())
         .text("sprite_name", pet_id.to_string())
         .text("display_name", display_name.to_string())
-        .text("png_hash", png_hash.to_string())
+        .text("sprite_hash", sprite_hash.to_string())
         .text("json_hash", json_hash.to_string())
-        .part("png", sheet_part)
+        .part("sprite", sheet_part)
         .part("json", manifest_part);
 
     let resp = client.post(endpoint).multipart(form).send().await?;

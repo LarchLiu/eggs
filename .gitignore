@@ -11,6 +11,7 @@ assets
 goblins
 
 server/data
+server/server
 .tmp
 
 desktop/src-tauri/target/
