@@ -117,13 +117,19 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
     }
 
     if let Some(pet_id) = id.strip_prefix(PET_PREFIX) {
-        // Route through state::set_pet so the same upload-then-swap gate
-        // that the CLI uses also applies to the right-click menu. If remote
-        // is enabled and the upload fails, we leave state.json untouched
-        // and log the error instead of silently dropping peers' view of us.
-        if let Err(e) = state::set_pet(pet_id) {
-            eprintln!("pet menu: failed to switch to '{pet_id}': {e}");
-        }
+        // Spawn the upload-then-swap on the tokio runtime so the GUI's main
+        // event loop stays responsive while ensure_pet_uploaded runs (HTTP
+        // upload of a fresh sprite atlas takes a few seconds on slow links;
+        // doing it on the menu callback's thread froze every window for the
+        // duration). state.json is only written after the upload succeeds,
+        // so the local UI keeps showing the previous pet until the swap is
+        // confirmed by the server.
+        let id_owned = pet_id.to_string();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = state::set_pet_async(&id_owned).await {
+                eprintln!("pet menu: failed to switch to '{id_owned}': {e}");
+            }
+        });
         return;
     }
 

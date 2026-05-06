@@ -92,12 +92,39 @@ pub fn set_pet(id: &str) -> io::Result<()> {
     // peers would keep showing the old sprite. By gating the local swap on
     // upload success we keep local + peer views in lockstep: either both
     // move to the new pet, or neither does.
+    //
+    // This blocking variant is for the CLI subcommand process (`eggs pet
+    // <id>`) — blocking the user's terminal during upload is fine. GUI
+    // callers (right-click menu) must use `set_pet_async` instead, since
+    // `block_on` from the Tauri main event loop would freeze every window.
     let remote = crate::remote::read_remote_config();
     if remote.enabled {
         let client = crate::client::read_client_config().map_err(|e| {
             io::Error::other(format!("cannot read client.json for remote upload: {e}"))
         })?;
         crate::upload::ensure_pet_uploaded_blocking(&remote.server_url, &client.device_id, id)
+            .map_err(|e| {
+                io::Error::other(format!("remote sprite upload failed for '{id}': {e}"))
+            })?;
+    }
+
+    let mut s = read_state().unwrap_or_else(|_| default_state());
+    s.pet = id.to_string();
+    write_state(&s)
+}
+
+/// Async counterpart of [`set_pet`] for callers that already live on a
+/// tokio runtime (the Tauri main event loop, the remote actor, etc.).
+/// Same upload-before-swap gate as the sync version, but the HTTP upload
+/// runs on the runtime instead of `block_on`-ing the calling thread.
+pub async fn set_pet_async(id: &str) -> io::Result<()> {
+    let remote = crate::remote::read_remote_config();
+    if remote.enabled {
+        let client = crate::client::read_client_config().map_err(|e| {
+            io::Error::other(format!("cannot read client.json for remote upload: {e}"))
+        })?;
+        crate::upload::ensure_pet_uploaded(&remote.server_url, &client.device_id, id)
+            .await
             .map_err(|e| {
                 io::Error::other(format!("remote sprite upload failed for '{id}': {e}"))
             })?;
