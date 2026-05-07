@@ -208,10 +208,20 @@ fn pet_roots() -> Vec<PetRoot> {
 }
 
 fn manifest_path_for(dir: &Path, kind: PetRootKind) -> PathBuf {
-    dir.join(match kind {
-        PetRootKind::Installed => "pet.json",
-        PetRootKind::RemoteCache => "sprite.json",
-    })
+    manifest_paths_for(dir, kind)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| dir.join("pet.json"))
+}
+
+fn manifest_paths_for(dir: &Path, kind: PetRootKind) -> Vec<PathBuf> {
+    match kind {
+        PetRootKind::Installed => vec![dir.join("pet.json")],
+        // New remote caches store `pet.json`, but older builds wrote
+        // `sprite.json`. Accept both so cached peer sprites show up in the
+        // context menu regardless of which version created them.
+        PetRootKind::RemoteCache => vec![dir.join("pet.json"), dir.join("sprite.json")],
+    }
 }
 
 fn load_manifest_from_dir(
@@ -219,16 +229,22 @@ fn load_manifest_from_dir(
     kind: PetRootKind,
     requested_id: Option<&str>,
 ) -> Option<(PetManifest, PathBuf)> {
-    let manifest_path = manifest_path_for(dir, kind);
-    let text = fs::read_to_string(&manifest_path).ok()?;
-    let mut manifest = serde_json::from_str::<PetManifest>(&text).ok()?;
-    if let Some(id) = requested_id {
-        manifest.id = id.to_string();
+    for manifest_path in manifest_paths_for(dir, kind) {
+        let Ok(text) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(mut manifest) = serde_json::from_str::<PetManifest>(&text) else {
+            continue;
+        };
+        if let Some(id) = requested_id {
+            manifest.id = id.to_string();
+        }
+        manifest.spritesheet_abs = resolve_spritesheet_path(dir, &manifest);
+        manifest.manifest_abs = Some(manifest_path.clone());
+        manifest.spritesheet_abs.as_ref()?;
+        return Some((manifest, manifest_path));
     }
-    manifest.spritesheet_abs = resolve_spritesheet_path(dir, &manifest);
-    manifest.manifest_abs = Some(manifest_path.clone());
-    manifest.spritesheet_abs.as_ref()?;
-    Some((manifest, manifest_path))
+    None
 }
 
 fn resolve_spritesheet_path(dir: &Path, manifest: &PetManifest) -> Option<PathBuf> {
@@ -245,4 +261,66 @@ fn resolve_spritesheet_path(dir: &Path, manifest: &PetManifest) -> Option<PathBu
     .into_iter()
     .map(|name| dir.join(name))
     .find(|path| path.exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_manifest_from_dir, PetRootKind};
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn make_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("eggs-pet-test-{name}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_remote_fixture(dir: &PathBuf, manifest_name: &str) {
+        fs::write(
+            dir.join(manifest_name),
+            r#"{
+  "id": "manifest-id",
+  "displayName": "Remote Buddy",
+  "description": "",
+  "spritesheetPath": "spritesheet.png"
+}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("spritesheet.png"), b"png").unwrap();
+    }
+
+    #[test]
+    fn remote_cache_accepts_pet_json() {
+        let dir = make_temp_dir("pet-json");
+        write_remote_fixture(&dir, "pet.json");
+
+        let (manifest, manifest_path) =
+            load_manifest_from_dir(&dir, PetRootKind::RemoteCache, Some("remote-cache-id"))
+                .expect("remote cache should load from pet.json");
+
+        assert_eq!(manifest.id, "remote-cache-id");
+        assert_eq!(manifest.display_name, "Remote Buddy");
+        assert_eq!(manifest_path, dir.join("pet.json"));
+        assert_eq!(manifest.manifest_abs, Some(dir.join("pet.json")));
+        assert_eq!(manifest.spritesheet_abs, Some(dir.join("spritesheet.png")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remote_cache_falls_back_to_legacy_sprite_json() {
+        let dir = make_temp_dir("sprite-json");
+        write_remote_fixture(&dir, "sprite.json");
+
+        let (manifest, manifest_path) =
+            load_manifest_from_dir(&dir, PetRootKind::RemoteCache, Some("remote-cache-id"))
+                .expect("remote cache should load from sprite.json");
+
+        assert_eq!(manifest.id, "remote-cache-id");
+        assert_eq!(manifest_path, dir.join("sprite.json"));
+        assert_eq!(manifest.manifest_abs, Some(dir.join("sprite.json")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
