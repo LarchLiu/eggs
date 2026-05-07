@@ -21,6 +21,10 @@ pub struct RuntimeState {
     pub state: String,
     #[serde(default = "default_scale_millis")]
     pub scale_millis: u16,
+    #[serde(default)]
+    pub window_x: Option<i32>,
+    #[serde(default)]
+    pub window_y: Option<i32>,
 }
 
 fn default_state_name() -> String {
@@ -83,6 +87,13 @@ pub fn set_state(name: &str) -> io::Result<()> {
     write_state(&s)
 }
 
+pub fn set_window_position(x: i32, y: i32) -> io::Result<()> {
+    let mut s = read_state().unwrap_or_else(|_| default_state());
+    s.window_x = Some(x);
+    s.window_y = Some(y);
+    write_state(&s)
+}
+
 pub fn set_pet(id: &str) -> io::Result<()> {
     // If remote is enabled, push the new pet's assets to the backend BEFORE
     // we touch state.json — and refuse the swap if upload fails. The running
@@ -141,5 +152,7 @@ fn default_state() -> RuntimeState {
         pet,
         state: default_state_name(),
         scale_millis: default_scale_millis(),
+        window_x: None,
+        window_y: None,
     }
 }

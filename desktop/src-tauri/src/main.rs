@@ -30,7 +30,7 @@ mod upload;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, RunEvent};
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewWindow};
 
 use peers::{PeerInit, PeerWindowManager, SharedPeerWindowManager};
 
@@ -181,7 +181,7 @@ fn main() {
                 let width = 192.0 * scale;
                 let height = 208.0 * scale;
                 let _ = win.set_size(LogicalSize::new(width, height));
-                if let Some((x, y)) = initial_pet_position(app, width, height) {
+                if let Some((x, y)) = saved_or_initial_pet_position(app, &current, width, height) {
                     let _ = win.set_position(LogicalPosition::new(x, y));
                 }
             }
@@ -270,11 +270,32 @@ fn main() {
             pet_menu::handle_menu_event(_app, menu_event.id());
         }
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            if let Some(window) = _app.get_webview_window("pet") {
+                persist_window_position(&window);
+            }
             disable_remote_before_exit();
             shutdown_for_run.store(true, Ordering::Relaxed);
             pid::clear();
         }
     });
+}
+
+fn saved_or_initial_pet_position(
+    app: &tauri::App,
+    current: &state::RuntimeState,
+    window_width: f64,
+    window_height: f64,
+) -> Option<(f64, f64)> {
+    match (current.window_x, current.window_y) {
+        (Some(x), Some(y)) => Some((x as f64, y as f64)),
+        _ => initial_pet_position(app, window_width, window_height),
+    }
+}
+
+fn persist_window_position(window: &WebviewWindow) {
+    if let Ok(position) = window.outer_position() {
+        let _ = state::set_window_position(position.x, position.y);
+    }
 }
 
 fn initial_pet_position(

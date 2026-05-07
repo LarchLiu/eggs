@@ -478,6 +478,8 @@ async fn run_actor(
         pet: String::new(),
         state: "idle".to_string(),
         scale_millis: 1000,
+        window_x: None,
+        window_y: None,
     });
     let mut pending_sprite_announce = false;
     let mut pending_state_sync = false;

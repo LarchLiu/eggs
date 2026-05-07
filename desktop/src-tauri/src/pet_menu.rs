@@ -193,6 +193,8 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
             pet: current.pet,
             state: state_name.to_string(),
             scale_millis: current.scale_millis,
+            window_x: current.window_x,
+            window_y: current.window_y,
         });
         return;
     }
@@ -207,6 +209,8 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
                 pet: current.pet,
                 state: current.state,
                 scale_millis: clamped,
+                window_x: current.window_x,
+                window_y: current.window_y,
             });
             if let Some(window) = app.get_webview_window("pet") {
                 let scale = clamped as f64 / 1000.0;
