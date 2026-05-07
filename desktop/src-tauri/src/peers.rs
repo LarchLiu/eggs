@@ -115,7 +115,7 @@ impl PeerWindowManager {
             ids.sort();
             ids.iter()
                 .enumerate()
-                .map(|(slot, peer_id)| (window_label(peer_id), slot))
+                .map(|(slot, peer_id)| (peer_window_label(peer_id), slot))
                 .collect()
         };
         for (label, slot) in entries {
@@ -140,7 +140,7 @@ impl PeerWindowManager {
             ids.sort();
             ids.iter()
                 .enumerate()
-                .map(|(slot, peer_id)| (window_label(peer_id), slot))
+                .map(|(slot, peer_id)| (peer_window_label(peer_id), slot))
                 .collect()
         };
         for (label, slot) in entries {
@@ -232,7 +232,7 @@ impl PeerWindowManager {
                     entry.state = state.clone();
                 }
             }
-            let label = window_label(&peer_id);
+            let label = peer_window_label(&peer_id);
             let _ = app.emit_to(
                 tauri::EventTarget::webview_window(label),
                 "peer-state",
@@ -313,7 +313,7 @@ impl PeerWindowManager {
             let mut map = self.open.lock().await;
             map.remove(peer_id);
         }
-        let label = window_label(peer_id);
+        let label = peer_window_label(peer_id);
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.close();
         }
@@ -322,7 +322,7 @@ impl PeerWindowManager {
     pub async fn close_all(&self, app: &AppHandle) {
         let labels: Vec<String> = {
             let mut map = self.open.lock().await;
-            let labels: Vec<String> = map.keys().map(|id| window_label(id)).collect();
+            let labels: Vec<String> = map.keys().map(|id| peer_window_label(id)).collect();
             map.clear();
             labels
         };
@@ -334,7 +334,7 @@ impl PeerWindowManager {
     }
 }
 
-fn window_label(peer_id: &str) -> String {
+pub fn peer_window_label(peer_id: &str) -> String {
     let safe: String = peer_id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-' | '_'))
@@ -350,7 +350,7 @@ async fn build_peer_window(
     x: f64,
     y: f64,
 ) -> tauri::Result<()> {
-    let label = window_label(peer_id);
+    let label = peer_window_label(peer_id);
     if app.get_webview_window(&label).is_some() {
         return Ok(());
     }

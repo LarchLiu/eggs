@@ -11,7 +11,7 @@
 // remote.json and exit; the running GUI's poller reacts automatically. This
 // keeps the CLI <-> GUI contract identical to the legacy Python tool.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -23,7 +23,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::bubbles;
 use crate::client::read_client_config;
+use crate::bubbles::SharedBubbleWindowManager;
 use crate::peers::SharedPeerWindowManager;
 use crate::state;
 
@@ -483,11 +485,70 @@ fn handle_incoming(app: &AppHandle, peers: &mut HashMap<String, PeerSnapshot>, m
     changed
 }
 
+fn room_code_for_history(cfg: &RemoteConfig) -> Option<String> {
+    if cfg.mode == "room" {
+        let room = cfg.room.trim();
+        if !room.is_empty() {
+            return Some(room.to_string());
+        }
+    }
+    None
+}
+
+fn handle_peer_chat(cfg: &RemoteConfig, msg: &Value) {
+    let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if msg_type != "peer_chat" {
+        return;
+    }
+    let peer_id = msg.get("peer_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if peer_id.is_empty() || text.is_empty() {
+        return;
+    }
+    let device_id = msg
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let room_code = room_code_for_history(cfg);
+
+    let event = match bubbles::queue_peer_user_message(
+        peer_id,
+        text,
+        room_code.clone(),
+        device_id.clone(),
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("remote peer chat bubble queue failed: {e}");
+            None
+        }
+    };
+
+    if let (Some(room), Some(evt)) = (room_code, event) {
+        let history = bubbles::ChatHistoryEntry {
+            id: evt.id,
+            source: bubbles::BubbleSource::PeerUserInput,
+            owner: evt.owner,
+            text: evt.text,
+            created_ms: evt.created_ms,
+            device_id,
+        };
+        if let Err(e) = bubbles::append_room_history(&room, history) {
+            eprintln!("remote peer chat history append failed: {e}");
+        }
+    }
+}
+
 // ---------- public entry --------------------------------------------------
 
-pub fn start(app: AppHandle, shutdown: Arc<AtomicBool>, peer_windows: SharedPeerWindowManager) {
+pub fn start(
+    app: AppHandle,
+    shutdown: Arc<AtomicBool>,
+    peer_windows: SharedPeerWindowManager,
+    bubble_windows: SharedBubbleWindowManager,
+) {
     tauri::async_runtime::spawn(async move {
-        run_actor(app, shutdown, peer_windows).await;
+        run_actor(app, shutdown, peer_windows, bubble_windows).await;
     });
 }
 
@@ -495,6 +556,7 @@ async fn run_actor(
     app: AppHandle,
     shutdown: Arc<AtomicBool>,
     peer_windows: SharedPeerWindowManager,
+    bubble_windows: SharedBubbleWindowManager,
 ) {
     let mut current_signature = String::new();
     let mut session: Option<Session> = None;
@@ -511,6 +573,8 @@ async fn run_actor(
     let mut next_heartbeat: Option<Instant> = None;
     let mut reconnect_delay = RECONNECT_INITIAL_SECS;
     let mut last_status_payload: Option<String> = None;
+    let mut pending_chat_outbox: VecDeque<bubbles::ChatOutboxFile> = VecDeque::new();
+    let mut pending_chat_paths: HashSet<String> = HashSet::new();
     // Name of the sprite we last successfully ran ensure_pet_uploaded for on
     // the current `cfg.server_url`. Used to skip a redundant hash-skip GET
     // when the connect block already uploaded this exact sprite on the same
@@ -531,10 +595,22 @@ async fn run_actor(
                 s.close().await;
             }
             peer_windows.close_all(&app).await;
+            bubble_windows
+                .sync_peer_owners(&app, &HashSet::<String>::new())
+                .await;
             return;
         }
 
         let cfg = read_remote_config();
+
+        if let Ok(outbox_files) = bubbles::drain_chat_outbox() {
+            for file in outbox_files {
+                let key = file.path.to_string_lossy().to_string();
+                if pending_chat_paths.insert(key) {
+                    pending_chat_outbox.push_back(file);
+                }
+            }
+        }
 
         // Read state.json once per tick: it's the source of truth for the
         // current sprite (state.pet) and the animation state we announce. The
@@ -560,6 +636,9 @@ async fn run_actor(
             peers.clear();
             emit_peers(&app, &peers);
             peer_windows.sync(&app, &peers).await;
+            bubble_windows
+                .sync_peer_owners(&app, &HashSet::<String>::new())
+                .await;
             current_signature = signature.clone();
             reconnect_delay = RECONNECT_INITIAL_SECS;
             // The new server (if URL changed) may not have this sprite
@@ -717,6 +796,10 @@ async fn run_actor(
         // --- send pending outbound ---
         if let Some(s) = session.as_mut() {
             let outgoing_is_sprite = pending_sprite_announce;
+            let outgoing_is_chat = !pending_sprite_announce
+                && !(pending_state_sync
+                    || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false))
+                && !pending_chat_outbox.is_empty();
             let outgoing = if pending_sprite_announce {
                 Some(json!({
                     "type": "sprite",
@@ -731,6 +814,15 @@ async fn run_actor(
                     "state": last_state.state,
                     "sprite": last_state.pet,
                 }))
+            } else if outgoing_is_chat {
+                pending_chat_outbox.front().map(|out| {
+                    json!({
+                        "type": "chat",
+                        "id": out.item.id,
+                        "text": out.item.text,
+                        "created_ms": out.item.created_ms,
+                    })
+                })
             } else {
                 None
             };
@@ -748,6 +840,15 @@ async fn run_actor(
                         if outgoing_is_sprite {
                             let status = build_status(&cfg, &current_sprite, true, false, "");
                             emit_if_changed(&status, &mut last_status_payload, &app);
+                        }
+                        if outgoing_is_chat {
+                            if let Some(sent) = pending_chat_outbox.pop_front() {
+                                let key = sent.path.to_string_lossy().to_string();
+                                pending_chat_paths.remove(&key);
+                                if let Err(e) = bubbles::acknowledge_chat_outbox(&sent.path) {
+                                    eprintln!("remote chat outbox ack failed: {e}");
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -770,6 +871,7 @@ async fn run_actor(
             tokio::select! {
                 msg = &mut recv_fut => match msg {
                     Ok(value) => {
+                        handle_peer_chat(&cfg, &value);
                         peers_changed = handle_incoming(&app, &mut peers, value);
                     }
                     Err(e) => { disconnect_reason = Some(e); }
@@ -779,6 +881,8 @@ async fn run_actor(
         }
         if peers_changed {
             peer_windows.sync(&app, &peers).await;
+            let active_peer_ids: HashSet<String> = peers.keys().cloned().collect();
+            bubble_windows.sync_peer_owners(&app, &active_peer_ids).await;
         }
 
         if let Some(reason) = disconnect_reason {
@@ -788,6 +892,9 @@ async fn run_actor(
             peers.clear();
             emit_peers(&app, &peers);
             peer_windows.sync(&app, &peers).await;
+            bubble_windows
+                .sync_peer_owners(&app, &HashSet::<String>::new())
+                .await;
             let permanent = is_permanent_error(&reason);
             let status = build_status(&cfg, &current_sprite, false, !permanent, &reason);
             emit_if_changed(&status, &mut last_status_payload, &app);

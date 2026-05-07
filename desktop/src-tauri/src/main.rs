@@ -18,6 +18,7 @@
 mod cli;
 mod cli_install;
 mod client;
+mod bubbles;
 mod peers;
 mod pet;
 mod pet_menu;
@@ -32,6 +33,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewWindow};
 
+use bubbles::{BubbleInit, BubbleWindowManager, SharedBubbleWindowManager};
 use peers::{PeerInit, PeerWindowManager, SharedPeerWindowManager};
 
 #[tauri::command]
@@ -115,6 +117,59 @@ async fn get_peer_init(
         .ok_or_else(|| format!("unknown peer: {peer_id}"))
 }
 
+#[tauri::command]
+async fn get_bubble_init(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    bubble_id: String,
+) -> Result<BubbleInit, String> {
+    state
+        .get_init(&bubble_id)
+        .await
+        .ok_or_else(|| format!("unknown bubble: {bubble_id}"))
+}
+
+#[tauri::command]
+async fn bubble_hover(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    bubble_id: String,
+    hovering: bool,
+) -> Result<(), String> {
+    state.set_hover(&bubble_id, hovering).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn bubble_dismiss(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    app: tauri::AppHandle,
+    bubble_id: String,
+) -> Result<(), String> {
+    state.dismiss_chat(&app, &bubble_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+fn bubble_constraints() -> bubbles::BubbleConstraints {
+    bubbles::constraints()
+}
+
+#[tauri::command]
+async fn bubble_resize(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    bubble_id: String,
+    height: f64,
+) -> Result<(), String> {
+    let clamped = height.clamp(bubbles::BUBBLE_MIN_HEIGHT, bubbles::BUBBLE_MAX_HEIGHT);
+    window
+        .set_size(LogicalSize::new(bubbles::BUBBLE_WIDTH, clamped))
+        .map_err(|e| e.to_string())?;
+    state.set_height(&bubble_id, clamped).await;
+    state.reposition_all(&app).await;
+    Ok(())
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
 
@@ -152,6 +207,11 @@ fn main() {
             quit,
             show_context_menu,
             get_peer_init,
+            get_bubble_init,
+            bubble_hover,
+            bubble_dismiss,
+            bubble_constraints,
+            bubble_resize,
         ])
         .setup(move |app| {
             // Best-effort: if launched from a packaged install (.app on macOS,
@@ -194,6 +254,8 @@ fn main() {
             // (drag → reposition), and the get_peer_init command.
             let peer_windows: SharedPeerWindowManager = Arc::new(PeerWindowManager::new());
             app.manage(peer_windows.clone());
+            let bubble_windows: SharedBubbleWindowManager = Arc::new(BubbleWindowManager::new());
+            app.manage(bubble_windows.clone());
             // Seed the manager's cached scale from disk so the first peer that
             // arrives is built at the right size, even before any user-driven
             // scale change.
@@ -212,6 +274,7 @@ fn main() {
             let win_for_poller = win.clone();
             let app_handle_for_poller = win.app_handle().clone();
             let peer_windows_for_poller = peer_windows.clone();
+            let bubble_windows_for_poller = bubble_windows.clone();
             std::thread::spawn(move || {
                 let mut last: Option<state::RuntimeState> = None;
                 loop {
@@ -225,9 +288,11 @@ fn main() {
                             if scale_changed {
                                 let app = app_handle_for_poller.clone();
                                 let mgr = peer_windows_for_poller.clone();
+                                let bubbles = bubble_windows_for_poller.clone();
                                 let scale_ms = current.scale_millis;
                                 tauri::async_runtime::spawn(async move {
                                     mgr.apply_scale(&app, scale_ms).await;
+                                    bubbles.reposition_all(&app).await;
                                 });
                             }
                             last = Some(current);
@@ -237,18 +302,47 @@ fn main() {
                 }
             });
 
+            // Poll one-shot bubble spool files, open bubble overlays, and keep
+            // them anchored / expired. This decouples CLI producers (`eggs hook`,
+            // `eggs message`) from GUI lifecycle and supports concurrent bubbles.
+            let app_handle_for_bubbles = win.app_handle().clone();
+            let bubble_windows_for_spool = bubble_windows.clone();
+            std::thread::spawn(move || loop {
+                match bubbles::drain_bubble_spool() {
+                    Ok(items) => {
+                        for evt in items {
+                            let app = app_handle_for_bubbles.clone();
+                            let mgr = bubble_windows_for_spool.clone();
+                            tauri::async_runtime::spawn(async move {
+                                mgr.show(&app, evt).await;
+                            });
+                        }
+                    }
+                    Err(e) => eprintln!("bubble spool read failed: {e}"),
+                }
+                let app = app_handle_for_bubbles.clone();
+                let mgr = bubble_windows_for_spool.clone();
+                tauri::async_runtime::spawn(async move {
+                    mgr.expire_due(&app).await;
+                });
+                std::thread::sleep(Duration::from_millis(200));
+            });
+
             // Drag tracking: when the local pet window moves, anchor every
             // open peer window to the new position. `Moved` fires per OS
             // notification (~60Hz on macOS during a drag); each spawn is a
             // fire-and-forget set_position per peer.
             let app_handle_for_move = win.app_handle().clone();
             let peer_windows_for_move = peer_windows.clone();
+            let bubble_windows_for_move = bubble_windows.clone();
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::Moved(_) = event {
                     let app = app_handle_for_move.clone();
                     let mgr = peer_windows_for_move.clone();
+                    let bubbles = bubble_windows_for_move.clone();
                     tauri::async_runtime::spawn(async move {
                         mgr.reposition_all(&app).await;
+                        bubbles.reposition_all(&app).await;
                     });
                 }
             });
@@ -258,6 +352,7 @@ fn main() {
                 app.handle().clone(),
                 shutdown_for_setup.clone(),
                 peer_windows,
+                bubble_windows.clone(),
             );
 
             Ok(())
@@ -270,6 +365,13 @@ fn main() {
             pet_menu::handle_menu_event(_app, menu_event.id());
         }
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            if let Some(mgr) = _app.try_state::<SharedBubbleWindowManager>() {
+                let app_handle = _app.clone();
+                let mgr = mgr.inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    mgr.close_all(&app_handle).await;
+                });
+            }
             if let Some(window) = _app.get_webview_window("pet") {
                 persist_window_position(&window);
             }

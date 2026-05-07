@@ -1,0 +1,68 @@
+:root {
+  --bg-main: rgba(255, 255, 255, 0.96);
+  --fg: #212121;
+  --stroke: rgba(0, 0, 0, 0.08);
+  --line-h: 1.2;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent !important;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+.bubble {
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  color: var(--fg);
+  background: var(--bg-main);
+  box-sizing: border-box;
+  font-family: "PingFang SC", "SF Pro Text", "Avenir Next", "Helvetica Neue", sans-serif;
+  pointer-events: auto;
+}
+
+.meta {
+  display: none;
+}
+
+.text {
+  font-size: 12px;
+  line-height: var(--line-h);
+  max-height: calc(3 * 1em * var(--line-h));
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.text.has-scroll {
+  padding-right: 4px;
+}
+
+.text::-webkit-scrollbar {
+  width: 4px;
+}
+
+.text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.text::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 10px;
+}
+
+.tail {
+  display: none;
+}

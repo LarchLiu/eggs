@@ -802,6 +802,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		outType := map[string]string{
 			"state":  "peer_state",
 			"action": "peer_action",
+			"chat":   "peer_chat",
 		}[t]
 		if outType == "" {
 			continue

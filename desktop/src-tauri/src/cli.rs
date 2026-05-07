@@ -9,6 +9,38 @@ use std::path::PathBuf;
 pub fn run_subcommand(argv: &[String]) -> i32 {
     let cmd = argv.get(1).map(String::as_str).unwrap_or("");
     match cmd {
+        "hook" => {
+            let text = join_args(argv, 2);
+            if text.trim().is_empty() {
+                eprintln!("usage: eggs hook <text>");
+                return 2;
+            }
+            match crate::bubbles::queue_hook_message(&text) {
+                Ok(Some(_)) => {
+                    println!("hook bubble queued");
+                    0
+                }
+                Ok(None) => {
+                    eprintln!("empty hook text");
+                    2
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        "message" => {
+            let text = join_args(argv, 2);
+            if text.trim().is_empty() {
+                eprintln!("usage: eggs message <text>");
+                return 2;
+            }
+            match queue_user_message(&text) {
+                Ok(()) => 0,
+                Err(code) => code,
+            }
+        }
         "state" => match argv.get(2) {
             Some(name) => match crate::state::set_state(name) {
                 Ok(()) => {
@@ -155,6 +187,54 @@ fn install_pet(src: &str) -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
+fn queue_user_message(text: &str) -> Result<(), i32> {
+    let remote = crate::remote::read_remote_config();
+    let room_code = if remote.mode == "room" && !remote.room.trim().is_empty() {
+        Some(remote.room.trim().to_string())
+    } else {
+        None
+    };
+
+    let evt = match crate::bubbles::queue_local_user_message(text, room_code.clone()) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            eprintln!("empty message text");
+            return Err(2);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Err(1);
+        }
+    };
+
+    if remote.enabled {
+        if let Err(e) = crate::bubbles::enqueue_chat_outbox(text, room_code.clone()) {
+            eprintln!("warning: could not enqueue remote chat outbox: {e}");
+        }
+    }
+
+    if let Some(room) = room_code {
+        let history = crate::bubbles::ChatHistoryEntry {
+            id: evt.id.clone(),
+            source: crate::bubbles::BubbleSource::UserInput,
+            owner: crate::bubbles::BubbleOwner::Local,
+            text: evt.text.clone(),
+            created_ms: evt.created_ms,
+            device_id: None,
+        };
+        if let Err(e) = crate::bubbles::append_room_history(&room, history) {
+            eprintln!("warning: could not append room history: {e}");
+        }
+    }
+
+    println!("message queued");
+    Ok(())
+}
+
+fn join_args(argv: &[String], start: usize) -> String {
+    argv.get(start..).unwrap_or(&[]).join(" ")
+}
+
 fn print_help() {
     eprintln!("eggs — animated desktop pet (Codex pet contract)");
     eprintln!();
@@ -176,6 +256,9 @@ fn print_help() {
     eprintln!("  eggs list             list installed pets");
     eprintln!("  eggs install <dir>    copy <dir>/{{pet.json,spritesheet.webp}}");
     eprintln!("                        into ~/.eggs/pets/<id>/");
+    eprintln!("  eggs hook <text>      queue a local hook bubble (for Codex hooks)");
+    eprintln!("  eggs message <text>   queue a user bubble; in remote mode also");
+    eprintln!("                        enqueue room chat + append <room_code>.json");
     eprintln!("  eggs status           show current pet + state");
     eprintln!("  eggs remote ...       multiplayer (see `eggs remote help`)");
     eprintln!("  eggs help             show this help");
