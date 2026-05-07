@@ -318,20 +318,23 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 }
             }
         }
-        "leave" => match crate::remote::update_remote_config(|cfg| {
-            cfg.enabled = false;
-            cfg.mode = "random".to_string();
-            cfg.room.clear();
-        }) {
-            Ok(_) => {
-                println!("left remote interaction");
-                0
+        "leave" => {
+            let current = crate::remote::read_remote_config();
+            if !current.enabled {
+                println!("remote is disabled; no room to leave");
+                return 0;
             }
-            Err(e) => {
-                eprintln!("error: {e}");
-                1
+            match crate::remote::leave_room() {
+                Ok(_) => {
+                    println!("left room (remote remains enabled)");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
             }
-        },
+        }
         "on" => match crate::remote::update_remote_config(|cfg| cfg.enabled = true) {
             Ok(cfg) => {
                 println!(
@@ -528,7 +531,7 @@ fn print_remote_help() {
     eprintln!("  eggs remote                 enable random match pool (alias of `random`)");
     eprintln!("  eggs remote random          enable random match pool");
     eprintln!("  eggs remote room <code>     enable room mode with invite code");
-    eprintln!("  eggs remote leave           disable remote interaction");
+    eprintln!("  eggs remote leave           leave current room/pair, keep remote enabled");
     eprintln!("  eggs remote on              enable using current mode/room");
     eprintln!("  eggs remote off             disable without changing mode/room");
     eprintln!("  eggs remote server <url>    set base http(s) URL of the Go server");

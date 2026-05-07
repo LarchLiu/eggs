@@ -38,7 +38,6 @@ const POLL_INTERVAL_MS: u64 = 200;
 struct RemoteRuntimeSnapshot {
     connected: bool,
     peer_count: usize,
-    leave_requested: bool,
 }
 
 fn runtime_snapshot() -> &'static Mutex<RemoteRuntimeSnapshot> {
@@ -53,22 +52,8 @@ fn with_runtime_snapshot<R>(f: impl FnOnce(&mut RemoteRuntimeSnapshot) -> R) -> 
     f(&mut guard)
 }
 
-pub fn request_leave_room() {
-    with_runtime_snapshot(|snap| {
-        snap.leave_requested = true;
-    });
-}
-
 pub fn can_leave_room() -> bool {
     with_runtime_snapshot(|snap| snap.connected && snap.peer_count > 0)
-}
-
-fn take_leave_request() -> bool {
-    with_runtime_snapshot(|snap| {
-        let requested = snap.leave_requested;
-        snap.leave_requested = false;
-        requested
-    })
 }
 
 // ---------- remote.json --------------------------------------------------
@@ -89,6 +74,8 @@ pub struct RemoteConfig {
     pub mode: String,
     #[serde(default)]
     pub room: String,
+    #[serde(default)]
+    pub session_nonce: u64,
 }
 
 fn default_server_url() -> String {
@@ -106,6 +93,7 @@ impl Default for RemoteConfig {
             enabled: false,
             mode: default_mode(),
             room: String::new(),
+            session_nonce: 0,
         }
     }
 }
@@ -156,18 +144,25 @@ pub fn update_remote_config<F: FnOnce(&mut RemoteConfig)>(f: F) -> std::io::Resu
     Ok(cfg)
 }
 
-/// Reconnect signature. Server URL, mode, and room only — local sprite
-/// changes are now handled in-place via a `{"type":"sprite",...}` message
-/// over the existing WS (the server's hub.updateClientSprite hot-swaps
-/// the binding and broadcasts `peer_sprite_changed`), so swapping pets
-/// must NOT tear down the room or matchmaking.
+pub fn leave_room() -> std::io::Result<RemoteConfig> {
+    update_remote_config(|cfg| {
+        cfg.session_nonce = cfg.session_nonce.wrapping_add(1);
+    })
+}
+
+/// Reconnect signature. Includes server URL, mode, room, plus a nonce used by
+/// "leave room" to force a reconnect cycle without disabling remote. Local
+/// sprite changes are handled in-place via a `{"type":"sprite",...}` message
+/// over the existing WS (the server's hub.updateClientSprite hot-swaps the
+/// binding and broadcasts `peer_sprite_changed`), so swapping pets must NOT
+/// tear down the room or matchmaking.
 fn config_signature(cfg: &RemoteConfig) -> String {
     if !cfg.enabled {
         return "off".to_string();
     }
     format!(
-        "on|{}|{}|{}",
-        cfg.server_url, cfg.mode, cfg.room
+        "on|{}|{}|{}|{}",
+        cfg.server_url, cfg.mode, cfg.room, cfg.session_nonce
     )
 }
 
@@ -545,27 +540,14 @@ async fn run_actor(
             let status = build_status(&cfg, &current_sprite, false, cfg.enabled, "");
             emit_if_changed(&status, &mut last_status_payload, &app);
             if !cfg.enabled {
-                let _ = take_leave_request();
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
                 continue;
             }
         }
 
         if !cfg.enabled {
-            let _ = take_leave_request();
             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             continue;
-        }
-
-        if take_leave_request() {
-            if let Some(s) = session.take() {
-                s.close().await;
-            }
-            peers.clear();
-            emit_peers(&app, &peers);
-            peer_windows.sync(&app, &peers).await;
-            let status = build_status(&cfg, &current_sprite, false, true, "");
-            emit_if_changed(&status, &mut last_status_payload, &app);
         }
 
         // --- ensure connected ---

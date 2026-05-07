@@ -197,7 +197,9 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
             spawn_remote_upload();
         }
         REMOTE_LEAVE_ID => {
-            remote::request_leave_room();
+            if let Err(e) = remote::leave_room() {
+                eprintln!("remote menu: failed to leave room: {e}");
+            }
         }
         _ => {}
     }

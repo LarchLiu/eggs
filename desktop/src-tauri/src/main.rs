@@ -91,7 +91,10 @@ fn quit(app: tauri::AppHandle) {
 fn disable_remote_before_exit() {
     // Ensure next launch starts with remote mode disabled, so users must opt in
     // explicitly from the menu / CLI.
-    if let Err(e) = remote::update_remote_config(|cfg| cfg.enabled = false) {
+    if let Err(e) = remote::update_remote_config(|cfg| {
+        cfg.enabled = false;
+        cfg.session_nonce = 0;
+    }) {
         eprintln!("warning: could not disable remote mode during shutdown: {e}");
     }
 }
