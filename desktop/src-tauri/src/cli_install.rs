@@ -151,11 +151,7 @@ mod macos {
         let _ = fs::remove_file(target);
         match std::os::unix::fs::symlink(exe, target) {
             Ok(()) => {
-                eprintln!(
-                    "cli_install: {} -> {}",
-                    target.display(),
-                    exe.display()
-                );
+                eprintln!("cli_install: {} -> {}", target.display(), exe.display());
                 true
             }
             Err(_) => false,
@@ -217,10 +213,7 @@ mod windows {
         let dir = dir.to_string_lossy().into_owned();
 
         let current = read_user_path().unwrap_or_default();
-        if current
-            .split(';')
-            .any(|p| p.eq_ignore_ascii_case(&dir))
-        {
+        if current.split(';').any(|p| p.eq_ignore_ascii_case(&dir)) {
             return; // already on PATH
         }
         let new = if current.is_empty() {
@@ -244,9 +237,7 @@ mod windows {
             .status();
         match status {
             Ok(s) if s.success() => {
-                eprintln!(
-                    "cli_install: added {dir} to user PATH (open a new shell to use `eggs`)"
-                );
+                eprintln!("cli_install: added {dir} to user PATH (open a new shell to use `eggs`)");
             }
             _ => eprintln!("cli_install: failed to update user PATH"),
         }
@@ -387,11 +378,7 @@ mod linux {
         let _ = fs::remove_file(target);
         match std::os::unix::fs::symlink(exe, target) {
             Ok(()) => {
-                eprintln!(
-                    "cli_install: {} -> {}",
-                    target.display(),
-                    exe.display()
-                );
+                eprintln!("cli_install: {} -> {}", target.display(), exe.display());
                 true
             }
             Err(_) => false,
@@ -422,11 +409,7 @@ mod linux {
         }
     }
 
-    fn looks_like_ours(
-        link_target: &Path,
-        current_exe: &Path,
-        appimage: Option<&Path>,
-    ) -> bool {
+    fn looks_like_ours(link_target: &Path, current_exe: &Path, appimage: Option<&Path>) -> bool {
         if link_target == current_exe {
             return true;
         }

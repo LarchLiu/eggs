@@ -100,10 +100,7 @@ fn disable_remote_before_exit() {
 }
 
 #[tauri::command]
-fn show_context_menu(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-) -> Result<(), String> {
+fn show_context_menu(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     pet_menu::show_context_menu(&app, &window)
 }
 
@@ -257,7 +254,11 @@ fn main() {
             });
 
             // Spawn the remote-multiplayer actor (ws + reconnect + heartbeats).
-            remote::start(app.handle().clone(), shutdown_for_setup.clone(), peer_windows);
+            remote::start(
+                app.handle().clone(),
+                shutdown_for_setup.clone(),
+                peer_windows,
+            );
 
             Ok(())
         })
@@ -276,7 +277,11 @@ fn main() {
     });
 }
 
-fn initial_pet_position(app: &tauri::App, _window_width: f64, _window_height: f64) -> Option<(f64, f64)> {
+fn initial_pet_position(
+    app: &tauri::App,
+    _window_width: f64,
+    _window_height: f64,
+) -> Option<(f64, f64)> {
     // Anchor at the top-left of the primary work area: peer windows are
     // stacked to the right with bottoms aligned (see peers::position_for_peer),
     // so a top-left anchor leaves the entire screen width available for peers

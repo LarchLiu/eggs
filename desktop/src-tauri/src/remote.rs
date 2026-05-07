@@ -114,11 +114,7 @@ pub fn read_remote_config() -> RemoteConfig {
         let _ = write_remote_config(&cfg);
         cfg
     };
-    cfg.server_url = cfg
-        .server_url
-        .trim_end_matches('/')
-        .trim()
-        .to_string();
+    cfg.server_url = cfg.server_url.trim_end_matches('/').trim().to_string();
     if cfg.server_url.is_empty() {
         cfg.server_url = default_server_url();
     }
@@ -168,9 +164,8 @@ fn config_signature(cfg: &RemoteConfig) -> String {
 
 // ---------- websocket session -------------------------------------------
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct Session {
     write: futures_util::stream::SplitSink<WsStream, Message>,
@@ -410,11 +405,7 @@ fn merge_peer_update(existing: Option<&PeerSnapshot>, msg: &Value) -> Option<Pee
     Some(next)
 }
 
-fn handle_incoming(
-    app: &AppHandle,
-    peers: &mut HashMap<String, PeerSnapshot>,
-    msg: Value,
-) -> bool {
+fn handle_incoming(app: &AppHandle, peers: &mut HashMap<String, PeerSnapshot>, msg: Value) -> bool {
     let msg_type = msg
         .get("type")
         .and_then(|v| v.as_str())
@@ -596,7 +587,8 @@ async fn run_actor(
                     emit_if_changed(&status, &mut last_status_payload, &app);
                     if retryable {
                         tokio::time::sleep(Duration::from_secs_f64(reconnect_delay)).await;
-                        reconnect_delay = (reconnect_delay * RECONNECT_BACKOFF).min(RECONNECT_MAX_SECS);
+                        reconnect_delay =
+                            (reconnect_delay * RECONNECT_BACKOFF).min(RECONNECT_MAX_SECS);
                     } else {
                         // Permanent: wait for the user to fix config / install
                         // the pet. The config-signature poller will wake us.
@@ -625,7 +617,8 @@ async fn run_actor(
                         tokio::time::sleep(Duration::from_secs(60)).await;
                     } else {
                         tokio::time::sleep(Duration::from_secs_f64(reconnect_delay)).await;
-                        reconnect_delay = (reconnect_delay * RECONNECT_BACKOFF).min(RECONNECT_MAX_SECS);
+                        reconnect_delay =
+                            (reconnect_delay * RECONNECT_BACKOFF).min(RECONNECT_MAX_SECS);
                     }
                     continue;
                 }
@@ -657,12 +650,8 @@ async fn run_actor(
                     continue;
                 }
             };
-            match crate::upload::ensure_pet_uploaded(
-                &cfg.server_url,
-                &device_id,
-                &current_sprite,
-            )
-            .await
+            match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &current_sprite)
+                .await
             {
                 Ok(_) => {
                     last_uploaded_sprite = current_sprite.clone();
@@ -698,9 +687,7 @@ async fn run_actor(
                     "state": last_state.state,
                 }))
             } else if pending_state_sync
-                || next_heartbeat
-                    .map(|t| Instant::now() >= t)
-                    .unwrap_or(false)
+                || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false)
             {
                 Some(json!({
                     "type": "state",
@@ -715,16 +702,14 @@ async fn run_actor(
                     Ok(()) => {
                         pending_sprite_announce = false;
                         pending_state_sync = false;
-                        next_heartbeat =
-                            Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
+                        next_heartbeat = Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
                         // Re-emit status after a sprite swap so the frontend's
                         // `RemoteStatus.sprite` field reflects the new pet
                         // (without this, the in-place swap path no longer
                         // hits the signature-drift emit at the top of the
                         // loop, and the status would stay stale).
                         if outgoing_is_sprite {
-                            let status =
-                                build_status(&cfg, &current_sprite, true, false, "");
+                            let status = build_status(&cfg, &current_sprite, true, false, "");
                             emit_if_changed(&status, &mut last_status_payload, &app);
                         }
                     }

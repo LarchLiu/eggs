@@ -56,8 +56,8 @@ pub fn read_state() -> io::Result<RuntimeState> {
         return Ok(s);
     }
     let text = fs::read_to_string(&path)?;
-    let mut s: RuntimeState = serde_json::from_str(&text)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut s: RuntimeState =
+        serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if s.pet.is_empty() {
         s.pet = default_state().pet;
     }

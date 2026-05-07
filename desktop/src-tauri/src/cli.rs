@@ -44,7 +44,7 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
         },
         "list" => match crate::pet::list_installed_pets() {
             Ok(pets) if pets.is_empty() => {
-                let dirs = crate::pet::pets_dirs();
+                let dirs = crate::pet::pet_search_dirs();
                 let display = if dirs.is_empty() {
                     "(no pets directories configured)".to_string()
                 } else {
@@ -377,14 +377,22 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
         }
         "status" => {
             let cfg = crate::remote::read_remote_config();
-            let room_display = if cfg.room.is_empty() { "-" } else { cfg.room.as_str() };
+            let room_display = if cfg.room.is_empty() {
+                "-"
+            } else {
+                cfg.room.as_str()
+            };
             // Sprite isn't stored in remote.json anymore; surface state.json::pet
             // here so `eggs remote status` still tells the user which pet would be
             // announced on connect.
             let sprite = crate::state::read_state()
                 .map(|s| s.pet)
                 .unwrap_or_default();
-            let sprite_display = if sprite.is_empty() { "-" } else { sprite.as_str() };
+            let sprite_display = if sprite.is_empty() {
+                "-"
+            } else {
+                sprite.as_str()
+            };
             println!(
                 "remote enabled={} server={} mode={} room={} sprite={}",
                 cfg.enabled, cfg.server_url, cfg.mode, room_display, sprite_display
@@ -509,10 +517,7 @@ fn run_pet_upload(pet_id: &str, quiet: bool) -> Result<(), i32> {
                     );
                 }
                 crate::upload::UploadMode::BytesUploaded => {
-                    println!(
-                        "uploaded pet '{pet_id}' (sprite_id={})",
-                        outcome.sprite_id
-                    );
+                    println!("uploaded pet '{pet_id}' (sprite_id={})", outcome.sprite_id);
                 }
             }
             Ok(())

@@ -62,7 +62,9 @@ impl UploadError {
             UploadError::Http(_) => true,
             UploadError::Io(_) => false,
             UploadError::PetNotInstalled(_) => false,
-            UploadError::Server { status, .. } => !matches!(*status, 400 | 401 | 403 | 404 | 409 | 422),
+            UploadError::Server { status, .. } => {
+                !matches!(*status, 400 | 401 | 403 | 404 | 409 | 422)
+            }
         }
     }
 }
@@ -133,8 +135,8 @@ pub async fn ensure_pet_uploaded(
     // load_pet walks every entry in pet::pets_dirs() and returns the first
     // matching manifest, so the caller doesn't need to know which root the
     // pet lives under (~/.eggs/pets vs the legacy ~/.codex/pets).
-    let manifest = pet::load_pet(pet_id)
-        .map_err(|_| UploadError::PetNotInstalled(pet_id.to_string()))?;
+    let manifest =
+        pet::load_pet(pet_id).map_err(|_| UploadError::PetNotInstalled(pet_id.to_string()))?;
     let sheet_path = manifest
         .spritesheet_abs
         .clone()
@@ -143,7 +145,10 @@ pub async fn ensure_pet_uploaded(
         .parent()
         .ok_or_else(|| UploadError::PetNotInstalled(pet_id.to_string()))?
         .to_path_buf();
-    let manifest_path = pet_dir.join("pet.json");
+    let manifest_path = manifest
+        .manifest_abs
+        .clone()
+        .unwrap_or_else(|| pet_dir.join("pet.json"));
     let manifest_bytes = fs::read(&manifest_path)?;
     if !sheet_path.exists() {
         return Err(UploadError::PetNotInstalled(pet_id.to_string()));
@@ -158,11 +163,11 @@ pub async fn ensure_pet_uploaded(
     } else {
         manifest.display_name.clone()
     };
-    let sheet_filename = if manifest.spritesheet_path.is_empty() {
-        "spritesheet.webp".to_string()
-    } else {
-        manifest.spritesheet_path.clone()
-    };
+    let sheet_filename = sheet_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "spritesheet.webp".to_string());
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))

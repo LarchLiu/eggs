@@ -23,7 +23,9 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
+};
 use tokio::sync::Mutex;
 
 use crate::remote::PeerSnapshot;
@@ -89,7 +91,10 @@ impl PeerWindowManager {
             state: entry.state.clone(),
             sprite_path_abs: entry.sprite_path.to_string_lossy().to_string(),
             json_path_abs: entry.json_path.to_string_lossy().to_string(),
-            config_path_abs: entry.config_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            config_path_abs: entry
+                .config_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
             scale_millis: self.scale_millis.load(Ordering::Relaxed),
         })
     }
@@ -295,9 +300,7 @@ impl PeerWindowManager {
         };
 
         let (x, y) = position_for_peer(app, scale_millis, slot);
-        if let Err(e) =
-            build_peer_window(app, &snap.peer_id, &cached, scale_millis, x, y).await
-        {
+        if let Err(e) = build_peer_window(app, &snap.peer_id, &cached, scale_millis, x, y).await {
             eprintln!("could not open peer window for {}: {}", snap.peer_id, e);
             // Roll back the map entry on failure.
             let mut map = self.open.lock().await;
@@ -394,8 +397,7 @@ fn position_for_peer(app: &AppHandle, scale_millis: u16, slot_index: usize) -> (
         .and_then(|w| w.outer_position().ok())
         .map(|p| (p.x as f64 / scale_factor, p.y as f64 / scale_factor))
         .unwrap_or((200.0, 200.0));
-    let (screen_w, screen_h) =
-        primary_monitor_size(app, scale_factor).unwrap_or((1440.0, 900.0));
+    let (screen_w, screen_h) = primary_monitor_size(app, scale_factor).unwrap_or((1440.0, 900.0));
 
     const GAP: f64 = 16.0;
     let dx = (pet_w + GAP) * (slot_index as f64 + 1.0);
