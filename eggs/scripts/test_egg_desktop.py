@@ -15,6 +15,7 @@ class RemoteCommandTests(unittest.TestCase):
             "server_url": "https://eggs.example.com",
             "mode": "room",
             "room": "ABC123",
+            "room_limit": 7,
             "sprite": "dino",
         }
         with patch.object(egg_desktop, "read_remote_config", return_value=config):
@@ -22,7 +23,7 @@ class RemoteCommandTests(unittest.TestCase):
             with patch("sys.stdout", out):
                 code = egg_desktop.remote_command("status")
         self.assertEqual(code, 0)
-        self.assertIn("remote enabled=True server=https://eggs.example.com mode=room room=ABC123 sprite=dino", out.getvalue())
+        self.assertIn("remote enabled=True server=https://eggs.example.com mode=room room=ABC123 room_limit=7 sprite=dino", out.getvalue())
 
     def test_remote_without_action_defaults_to_random(self) -> None:
         with (
@@ -66,9 +67,24 @@ class RemoteCommandTests(unittest.TestCase):
             with patch("sys.stdout", out):
                 code = egg_desktop.remote_command("room", "ABC123")
         self.assertEqual(code, 0)
-        write_remote_config.assert_called_once_with({"enabled": True, "mode": "room", "room": "ABC123", "sprite": "dino"})
+        write_remote_config.assert_called_once_with({"enabled": True, "mode": "room", "room": "ABC123", "room_limit": 5, "sprite": "dino"})
         apply_remote_runtime_change.assert_called_once_with(ensure_running=True)
-        self.assertIn("remote room enabled: ABC123", out.getvalue())
+        self.assertIn("remote room enabled: ABC123 (limit=5)", out.getvalue())
+
+    def test_remote_room_accepts_custom_limit(self) -> None:
+        with (
+            patch.object(egg_desktop, "read_sprite", return_value="dino"),
+            patch.object(egg_desktop, "ensure_remote_sprite_uploaded", return_value=True),
+            patch.object(egg_desktop, "write_remote_config") as write_remote_config,
+            patch.object(egg_desktop, "apply_remote_runtime_change") as apply_remote_runtime_change,
+        ):
+            out = io.StringIO()
+            with patch("sys.stdout", out):
+                code = egg_desktop.remote_command("room", "ABC123", "9")
+        self.assertEqual(code, 0)
+        write_remote_config.assert_called_once_with({"enabled": True, "mode": "room", "room": "ABC123", "room_limit": 9, "sprite": "dino"})
+        apply_remote_runtime_change.assert_called_once_with(ensure_running=True)
+        self.assertIn("remote room enabled: ABC123 (limit=9)", out.getvalue())
 
     def test_remote_leave_disables_remote_and_restarts_sidecar(self) -> None:
         with (

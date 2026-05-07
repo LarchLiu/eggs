@@ -90,10 +90,12 @@ URLs when the uploaded bytes are identical.
 ## WebSocket
 
 ```text
-GET /ws?device_id=<id>&sprite=<name>&mode=random|room&room=<code>
+GET /ws?device_id=<id>&sprite=<name>&mode=random|room&room=<code>&room_limit=<n>
 ```
 
-All live interaction is strictly 1-to-1. When `mode=random`, the server places the client into a waiting pool until it can pair with exactly one other online peer using a different sprite. After a match is found, the server creates a temporary private room for that pair. The same uploaded sprite record cannot be online more than once anywhere on the server. Invite rooms are also capped at two peers.
+Random live interaction is strictly 1-to-1. When `mode=random`, the server places the client into a waiting pool until it can pair with exactly one other online peer using a different sprite. After a match is found, the server creates a temporary private room for that pair. The same uploaded sprite record cannot be online more than once anywhere on the server.
+
+Invite rooms (`mode=room`) default to `5` peers and accept an optional `room_limit` query parameter. Only the first client that creates a given room code can set that limit; later joiners may send their own `room_limit`, but the server ignores it and keeps the creator's value.
 
 Client messages:
 

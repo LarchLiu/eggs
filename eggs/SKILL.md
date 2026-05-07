@@ -160,7 +160,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - Runtime data lives at `~/.eggs/` (Windows: `C:\Users\<n>\.eggs\`). Override via `EGGS_APP_DIR`. State, remote config, device id, PID file, cached peer assets all share that one folder.
 - Pets live at `~/.eggs/pets/<id>/` (each with `pet.json` + a spritesheet). The runtime also still reads `~/.codex/pets/<id>/` for backward compatibility with the legacy Python skill.
 - The transparent always-on-top window is 192x208 (8x9 atlas with 192x208 cells per the Codex pet contract); the user can rescale via the right-click context menu (0.4x / 0.5x / 0.6x / 0.8x / 1.0x). Peer windows on screen mirror the local scale and follow the local pet during drag.
-- Remote interaction is opt-in. Settings live in `~/.eggs/remote.json` (`server_url`, `enabled`, `mode`, `room`, `session_nonce`), anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<content_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
+- Remote interaction is opt-in. Settings live in `~/.eggs/remote.json` (`server_url`, `enabled`, `mode`, `room`, `room_limit`, `session_nonce`), anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<content_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
 - `remote` / `remote on` preserve the saved `mode` and `room` in `remote.json`; `remote random` switches only the mode and keeps any saved room code for later reuse.
 - `mode=room` only stays in room mode when `room` is non-empty; an empty room code automatically falls back to `random`.
 - `remote leave` bumps `session_nonce` to force a reconnect cycle (leave room/pair) without flipping `enabled` to `false`.

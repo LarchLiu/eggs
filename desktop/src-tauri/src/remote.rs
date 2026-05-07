@@ -28,6 +28,9 @@ use crate::peers::SharedPeerWindowManager;
 use crate::state;
 
 const DEFAULT_SERVER_URL: &str = "http://localhost:8787";
+const DEFAULT_ROOM_LIMIT: u16 = 5;
+const MIN_ROOM_LIMIT: u16 = 2;
+const MAX_ROOM_LIMIT: u16 = 100;
 const HEARTBEAT_SECS: u64 = 20;
 const RECONNECT_INITIAL_SECS: f64 = 2.0;
 const RECONNECT_MAX_SECS: f64 = 60.0;
@@ -74,6 +77,8 @@ pub struct RemoteConfig {
     pub mode: String,
     #[serde(default)]
     pub room: String,
+    #[serde(default = "default_room_limit")]
+    pub room_limit: u16,
     #[serde(default)]
     pub session_nonce: u64,
 }
@@ -86,6 +91,10 @@ fn default_mode() -> String {
     "random".to_string()
 }
 
+fn default_room_limit() -> u16 {
+    DEFAULT_ROOM_LIMIT
+}
+
 impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
@@ -93,6 +102,7 @@ impl Default for RemoteConfig {
             enabled: false,
             mode: default_mode(),
             room: String::new(),
+            room_limit: default_room_limit(),
             session_nonce: 0,
         }
     }
@@ -120,6 +130,7 @@ pub fn read_remote_config() -> RemoteConfig {
     }
     cfg.mode = normalize_mode(&cfg.mode, &cfg.room);
     cfg.room = cfg.room.trim().to_string();
+    cfg.room_limit = normalize_room_limit(cfg.room_limit);
     cfg
 }
 
@@ -132,6 +143,15 @@ fn normalize_mode(mode: &str, room: &str) -> String {
         "random" => "random".to_string(),
         _ if has_room => "room".to_string(),
         _ => default_mode(),
+    }
+}
+
+fn normalize_room_limit(limit: u16) -> u16 {
+    match limit {
+        0 => DEFAULT_ROOM_LIMIT,
+        n if n < MIN_ROOM_LIMIT => MIN_ROOM_LIMIT,
+        n if n > MAX_ROOM_LIMIT => MAX_ROOM_LIMIT,
+        n => n,
     }
 }
 
@@ -167,8 +187,8 @@ fn config_signature(cfg: &RemoteConfig) -> String {
         return "off".to_string();
     }
     format!(
-        "on|{}|{}|{}|{}",
-        cfg.server_url, cfg.mode, cfg.room, cfg.session_nonce
+        "on|{}|{}|{}|{}|{}",
+        cfg.server_url, cfg.mode, cfg.room, cfg.room_limit, cfg.session_nonce
     )
 }
 
@@ -248,6 +268,9 @@ fn build_ws_url(cfg: &RemoteConfig, device_id: &str, sprite: &str) -> Result<url
         q.append_pair("mode", &cfg.mode);
         q.append_pair("room", &cfg.room);
         q.append_pair("sprite", sprite);
+        if cfg.mode == "room" {
+            q.append_pair("room_limit", &cfg.room_limit.to_string());
+        }
     }
     Ok(url)
 }
@@ -284,6 +307,7 @@ pub struct RemoteStatus {
     pub server_url: String,
     pub mode: String,
     pub room: String,
+    pub room_limit: u16,
     pub sprite: String,
 }
 
@@ -317,6 +341,7 @@ fn build_status(
         server_url: cfg.server_url.clone(),
         mode: cfg.mode.clone(),
         room: cfg.room.clone(),
+        room_limit: cfg.room_limit,
         sprite: sprite.to_string(),
     }
 }

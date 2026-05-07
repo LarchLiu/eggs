@@ -266,9 +266,23 @@ fn run_uninstall_cli_subcommand() -> i32 {
 
 // ---------- remote subcommand ------------------------------------------
 
+fn parse_room_limit_arg(value: Option<&str>) -> Result<u16, String> {
+    let Some(raw) = value.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(5);
+    };
+    let limit = raw
+        .parse::<u16>()
+        .map_err(|_| "room limit must be an integer between 2 and 100".to_string())?;
+    if !(2..=100).contains(&limit) {
+        return Err("room limit must be between 2 and 100".to_string());
+    }
+    Ok(limit)
+}
+
 fn run_remote_subcommand(argv: &[String]) -> i32 {
     let action = argv.get(2).map(String::as_str).unwrap_or("");
     let value = argv.get(3).map(String::as_str);
+    let extra = argv.get(4).map(String::as_str);
     match action {
         "" => {
             let pet_id = match resolve_pet_for_upload() {
@@ -283,8 +297,8 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                     ensure_gui_running();
                     if cfg.mode == "room" {
                         println!(
-                            "remote room enabled: {} (server={}, sprite={})",
-                            cfg.room, cfg.server_url, pet_id
+                            "remote room enabled: {} (limit={}, server={}, sprite={})",
+                            cfg.room, cfg.room_limit, cfg.server_url, pet_id
                         );
                     } else {
                         println!(
@@ -328,7 +342,7 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
         }
         "room" => {
             let Some(code_value) = value else {
-                eprintln!("usage: eggs remote room <code>");
+                eprintln!("usage: eggs remote room <code> [limit]");
                 return 2;
             };
             let code = code_value.trim();
@@ -336,6 +350,13 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 eprintln!("room code cannot be empty");
                 return 2;
             }
+            let room_limit = match parse_room_limit_arg(extra) {
+                Ok(limit) => limit,
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    return 2;
+                }
+            };
             let pet_id = match resolve_pet_for_upload() {
                 Ok(id) => id,
                 Err(code) => return code,
@@ -347,12 +368,13 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 cfg.enabled = true;
                 cfg.mode = "room".to_string();
                 cfg.room = code.to_string();
+                cfg.room_limit = room_limit;
             }) {
                 Ok(cfg) => {
                     ensure_gui_running();
                     println!(
-                        "remote room enabled: {} (server={}, sprite={})",
-                        cfg.room, cfg.server_url, pet_id
+                        "remote room enabled: {} (limit={}, server={}, sprite={})",
+                        cfg.room, cfg.room_limit, cfg.server_url, pet_id
                     );
                     0
                 }
@@ -426,8 +448,8 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 sprite.as_str()
             };
             println!(
-                "remote enabled={} server={} mode={} room={} sprite={}",
-                cfg.enabled, cfg.server_url, cfg.mode, room_display, sprite_display
+                "remote enabled={} server={} mode={} room={} room_limit={} sprite={}",
+                cfg.enabled, cfg.server_url, cfg.mode, room_display, cfg.room_limit, sprite_display
             );
             0
         }
@@ -567,7 +589,7 @@ fn print_remote_help() {
     eprintln!("usage:");
     eprintln!("  eggs remote                 enable using saved remote.json mode/room");
     eprintln!("  eggs remote random          enable random match pool");
-    eprintln!("  eggs remote room <code>     enable room mode with invite code");
+    eprintln!("  eggs remote room <code> [limit] enable room mode with invite code");
     eprintln!("  eggs remote leave           leave current room/pair, keep remote enabled");
     eprintln!("  eggs remote on              enable using current mode/room");
     eprintln!("  eggs remote off             disable without changing mode/room");
@@ -586,5 +608,5 @@ fn print_remote_help() {
     eprintln!("config files (legacy compatible with egg_desktop.py):");
     eprintln!("  ~/.eggs/state.json    pet + animation state (source of truth for the active pet)");
     eprintln!("  ~/.eggs/client.json   anonymous device_id (auto-generated)");
-    eprintln!("  ~/.eggs/remote.json   server_url, enabled, mode, room");
+    eprintln!("  ~/.eggs/remote.json   server_url, enabled, mode, room, room_limit");
 }

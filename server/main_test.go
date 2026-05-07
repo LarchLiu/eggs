@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -675,19 +676,67 @@ func TestInviteRoomJoinDeliversExistingPeerSnapshot(t *testing.T) {
 	}
 	first := &wsClient{id: "peer-a", mode: "room", spriteID: "sprite-a", roomCode: "LOAD", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
 	second := &wsClient{id: "peer-b", mode: "room", spriteID: "sprite-b", roomCode: "LOAD", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
-	firstDeliveries, err := h.join(first, "LOAD")
+	firstDeliveries, err := h.join(first, "LOAD", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(firstDeliveries) != 1 {
 		t.Fatalf("first join deliveries=%d, want 1", len(firstDeliveries))
 	}
-	secondDeliveries, err := h.join(second, "LOAD")
+	secondDeliveries, err := h.join(second, "LOAD", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(secondDeliveries) != 2 {
 		t.Fatalf("second join deliveries=%d, want 2", len(secondDeliveries))
+	}
+}
+
+func TestInviteRoomUsesCreatorLimitAndDefaultsToFive(t *testing.T) {
+	h := &hub{
+		rooms:         map[string]*roomState{},
+		roomByClient:  map[string]string{},
+		onlineSprites: map[string]*wsClient{},
+	}
+	makePeer := func(id string) *wsClient {
+		return &wsClient{
+			id:       id,
+			mode:     "room",
+			spriteID: "sprite-" + id,
+			sendCh:   make(chan []byte, 8),
+			doneCh:   make(chan struct{}),
+			state:    "hatched",
+		}
+	}
+
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := h.join(makePeer(id), "FIVE", 0); err != nil {
+			t.Fatalf("join %s failed: %v", id, err)
+		}
+	}
+	if _, err := h.join(makePeer("f"), "FIVE", 0); err == nil {
+		t.Fatal("sixth join should fail when invite room uses the default limit")
+	}
+
+	custom := &hub{
+		rooms:         map[string]*roomState{},
+		roomByClient:  map[string]string{},
+		onlineSprites: map[string]*wsClient{},
+	}
+	if _, err := custom.join(makePeer("g"), "TRIO", 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := custom.join(makePeer("h"), "TRIO", 9); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := custom.join(makePeer("i"), "TRIO", 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := custom.rooms["TRIO"].limit; got != 3 {
+		t.Fatalf("room limit=%d, want 3 from the creator", got)
+	}
+	if _, err := custom.join(makePeer("j"), "TRIO", 20); err == nil {
+		t.Fatal("fourth join should fail once the creator-selected limit is reached")
 	}
 }
 
@@ -703,14 +752,14 @@ func TestRandomLobbyMatchesPairsOnly(t *testing.T) {
 	b := &wsClient{id: "b", mode: "random", spriteID: "sprite-b", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
 	c := &wsClient{id: "c", mode: "random", spriteID: "sprite-c", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
 
-	first, err := h.join(a, "RANDOM")
+	first, err := h.join(a, "RANDOM", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first) != 0 {
 		t.Fatalf("first random join should wait, got %#v", first)
 	}
-	second, err := h.join(b, "RANDOM")
+	second, err := h.join(b, "RANDOM", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +769,7 @@ func TestRandomLobbyMatchesPairsOnly(t *testing.T) {
 	if a.roomCode == "" || a.roomCode != b.roomCode {
 		t.Fatalf("random pair should share one room, got a=%q b=%q", a.roomCode, b.roomCode)
 	}
-	third, err := h.join(c, "RANDOM")
+	third, err := h.join(c, "RANDOM", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +793,7 @@ func TestRandomWaitingPeerRemovalSkipsDisconnectedClient(t *testing.T) {
 	b := &wsClient{id: "b", mode: "random", spriteID: "sprite-b", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
 	c := &wsClient{id: "c", mode: "random", spriteID: "sprite-c", sendCh: make(chan []byte, 8), doneCh: make(chan struct{}), state: "hatched"}
 
-	if _, err := h.join(a, "RANDOM"); err != nil {
+	if _, err := h.join(a, "RANDOM", 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(h.waitingByID); got != 1 {
@@ -758,14 +807,14 @@ func TestRandomWaitingPeerRemovalSkipsDisconnectedClient(t *testing.T) {
 		t.Fatalf("waiting peer %q should be removed from queue", a.id)
 	}
 
-	if _, err := h.join(b, "RANDOM"); err != nil {
+	if _, err := h.join(b, "RANDOM", 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(h.waitingByID); got != 1 {
 		t.Fatalf("waiting peers after rejoin=%d, want 1", got)
 	}
 
-	deliveries, err := h.join(c, "RANDOM")
+	deliveries, err := h.join(c, "RANDOM", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,6 +883,10 @@ func multipartUploadBody(t *testing.T, fields map[string]string, files map[strin
 }
 
 func dialTestWS(t *testing.T, baseURL string, deviceID string, spriteName string, mode string, room string) net.Conn {
+	return dialTestWSWithRoomLimit(t, baseURL, deviceID, spriteName, mode, room, 0)
+}
+
+func dialTestWSWithRoomLimit(t *testing.T, baseURL string, deviceID string, spriteName string, mode string, room string, roomLimit int) net.Conn {
 	t.Helper()
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -844,6 +897,9 @@ func dialTestWS(t *testing.T, baseURL string, deviceID string, spriteName string
 	query.Set("sprite", spriteName)
 	query.Set("mode", mode)
 	query.Set("room", room)
+	if roomLimit > 0 {
+		query.Set("room_limit", strconv.Itoa(roomLimit))
+	}
 	conn, err := net.Dial("tcp", u.Host)
 	if err != nil {
 		t.Fatal(err)

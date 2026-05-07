@@ -33,12 +33,15 @@ import (
 )
 
 const (
-	maxPNGBytes    = 8 << 20
-	maxJSONBytes   = 1 << 20
-	maxConfigBytes = 256 << 10
-	maxFrameSize   = 1024
-	maxFrameCount  = 512
-	maxGridSide    = 64
+	maxPNGBytes            = 8 << 20
+	maxJSONBytes           = 1 << 20
+	maxConfigBytes         = 256 << 10
+	maxFrameSize           = 1024
+	maxFrameCount          = 512
+	maxGridSide            = 64
+	defaultInviteRoomLimit = 5
+	minInviteRoomLimit     = 2
+	maxInviteRoomLimit     = 100
 
 	deviceRetention       = 30 * 24 * time.Hour
 	deviceCleanupInterval = time.Hour
@@ -127,8 +130,8 @@ type hub struct {
 }
 
 type roomState struct {
-	first  *wsClient
-	second *wsClient
+	limit   int
+	members []*wsClient
 }
 
 type delivery struct {
@@ -689,6 +692,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	spriteName := safeName(r.URL.Query().Get("sprite"))
 	mode := r.URL.Query().Get("mode")
 	roomCode := strings.ToUpper(safeName(r.URL.Query().Get("room")))
+	roomLimit := defaultInviteRoomLimit
 	if deviceID == "" || spriteName == "" {
 		http.Error(w, "device_id and sprite are required", http.StatusBadRequest)
 		return
@@ -699,6 +703,13 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	} else if roomCode == "" {
 		http.Error(w, "room code is required for room mode", http.StatusBadRequest)
 		return
+	} else {
+		parsedLimit, err := parseInviteRoomLimit(r.URL.Query().Get("room_limit"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		roomLimit = parsedLimit
 	}
 	spriteRecord, err := s.loadSpriteByOwnerAndName(r.Context(), deviceID, spriteName)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -727,7 +738,7 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		state:    "hatched",
 	}
 
-	deliveries, err := s.hub.join(client, roomCode)
+	deliveries, err := s.hub.join(client, roomCode, roomLimit)
 	if err != nil {
 		_ = conn.Close()
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -935,7 +946,7 @@ func (s *server) requestBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-func (h *hub) join(c *wsClient, roomCode string) ([]delivery, error) {
+func (h *hub) join(c *wsClient, roomCode string, roomLimit int) ([]delivery, error) {
 	h.onlineMu.Lock()
 	if existing := h.onlineSprites[c.spriteID]; existing != nil {
 		h.onlineMu.Unlock()
@@ -946,7 +957,7 @@ func (h *hub) join(c *wsClient, roomCode string) ([]delivery, error) {
 	defer h.matchMu.Unlock()
 	defer h.onlineMu.Unlock()
 	if c.mode == "room" {
-		deliveries, err := h.joinInviteRoomLocked(c, roomCode)
+		deliveries, err := h.joinInviteRoomLocked(c, roomCode, roomLimit)
 		if err != nil {
 			delete(h.onlineSprites, c.spriteID)
 			return nil, err
@@ -956,10 +967,10 @@ func (h *hub) join(c *wsClient, roomCode string) ([]delivery, error) {
 	return h.joinRandomLocked(c), nil
 }
 
-func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string) ([]delivery, error) {
+func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string, roomLimit int) ([]delivery, error) {
 	room := h.rooms[roomCode]
 	if room == nil {
-		room = &roomState{}
+		room = &roomState{limit: normalizeInviteRoomLimit(roomLimit)}
 		h.rooms[roomCode] = room
 	}
 	if room.full() {
@@ -967,9 +978,6 @@ func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string) ([]delivery, er
 	}
 	existing := room.peers()
 	room.add(c)
-	if len(existing) == 1 {
-		linkPeers(existing[0], c)
-	}
 	c.roomCode = roomCode
 	h.roomByClient[c.id] = roomCode
 	deliveries := []delivery{{target: c, msg: roomSnapshotMessage(existing)}}
@@ -982,9 +990,11 @@ func (h *hub) joinInviteRoomLocked(c *wsClient, roomCode string) ([]delivery, er
 func (h *hub) joinRandomLocked(c *wsClient) []delivery {
 	if peer := h.dequeueWaitingRandomLocked(); peer != nil {
 		roomCode := "random-" + randomID()
-		room := &roomState{first: peer, second: c}
+		room := &roomState{
+			limit:   minInviteRoomLimit,
+			members: []*wsClient{peer, c},
+		}
 		h.rooms[roomCode] = room
-		linkPeers(peer, c)
 		peer.roomCode = roomCode
 		c.roomCode = roomCode
 		h.roomByClient[peer.id] = roomCode
@@ -1017,12 +1027,11 @@ func (h *hub) leave(c *wsClient) []delivery {
 		delete(h.roomByClient, c.id)
 		return nil
 	}
-	peer := room.remove(c.id)
-	unlinkPeers(c, peer)
+	others := room.remove(c.id)
 	delete(h.roomByClient, c.id)
 	c.roomCode = ""
 	deliveries := make([]delivery, 0, 2)
-	if peer != nil {
+	for _, peer := range others {
 		deliveries = append(deliveries, delivery{
 			target: peer,
 			msg:    map[string]any{"type": "peer_left", "peer_id": c.id},
@@ -1051,14 +1060,28 @@ func (h *hub) broadcast(sender *wsClient, msg map[string]any) []delivery {
 	if err != nil {
 		return nil
 	}
-	peer := sender.getPeer()
-	if peer == nil {
+	h.matchMu.Lock()
+	defer h.matchMu.Unlock()
+	roomCode := h.roomByClient[sender.id]
+	if roomCode == "" {
 		return nil
 	}
-	return []delivery{{
-		target: peer,
-		raw:    data,
-	}}
+	room := h.rooms[roomCode]
+	if room == nil {
+		return nil
+	}
+	peers := room.peers()
+	deliveries := make([]delivery, 0, len(peers))
+	for _, peer := range peers {
+		if peer == nil || peer.id == sender.id {
+			continue
+		}
+		deliveries = append(deliveries, delivery{
+			target: peer,
+			raw:    data,
+		})
+	}
+	return deliveries
 }
 
 func (h *hub) updateClientSprite(c *wsClient, sprite spriteRecord) error {
@@ -1113,64 +1136,44 @@ func (h *hub) dequeueWaitingRandomLocked() *wsClient {
 }
 
 func (r *roomState) full() bool {
-	return r != nil && r.first != nil && r.second != nil
+	return r != nil && len(r.members) >= r.effectiveLimit()
 }
 
 func (r *roomState) empty() bool {
-	return r == nil || (r.first == nil && r.second == nil)
+	return r == nil || len(r.members) == 0
 }
 
 func (r *roomState) add(c *wsClient) {
 	if r == nil || c == nil {
 		return
 	}
-	if r.first == nil {
-		r.first = c
-		return
+	for _, peer := range r.members {
+		if peer != nil && peer.id == c.id {
+			return
+		}
 	}
-	if r.second == nil {
-		r.second = c
-	}
+	r.members = append(r.members, c)
 }
 
 func (r *roomState) peers() []*wsClient {
 	if r == nil {
 		return nil
 	}
-	peers := make([]*wsClient, 0, 2)
-	if r.first != nil {
-		peers = append(peers, r.first)
-	}
-	if r.second != nil {
-		peers = append(peers, r.second)
-	}
+	peers := make([]*wsClient, 0, len(r.members))
+	peers = append(peers, r.members...)
 	return peers
 }
 
-func (r *roomState) peerOf(clientID string) *wsClient {
+func (r *roomState) remove(clientID string) []*wsClient {
 	if r == nil {
 		return nil
 	}
-	if r.first != nil && r.first.id == clientID {
-		return r.second
-	}
-	if r.second != nil && r.second.id == clientID {
-		return r.first
-	}
-	return nil
-}
-
-func (r *roomState) remove(clientID string) *wsClient {
-	if r == nil {
-		return nil
-	}
-	if r.first != nil && r.first.id == clientID {
-		r.first = nil
-		return r.second
-	}
-	if r.second != nil && r.second.id == clientID {
-		r.second = nil
-		return r.first
+	for i, peer := range r.members {
+		if peer == nil || peer.id != clientID {
+			continue
+		}
+		r.members = append(r.members[:i], r.members[i+1:]...)
+		return r.peers()
 	}
 	return nil
 }
@@ -1179,13 +1182,44 @@ func (r *roomState) onlyPeer() *wsClient {
 	if r == nil {
 		return nil
 	}
-	if r.first != nil && r.second == nil {
-		return r.first
-	}
-	if r.second != nil && r.first == nil {
-		return r.second
+	if len(r.members) == 1 {
+		return r.members[0]
 	}
 	return nil
+}
+
+func (r *roomState) effectiveLimit() int {
+	if r == nil {
+		return defaultInviteRoomLimit
+	}
+	return normalizeInviteRoomLimit(r.limit)
+}
+
+func normalizeInviteRoomLimit(limit int) int {
+	if limit <= 0 {
+		return defaultInviteRoomLimit
+	}
+	if limit < minInviteRoomLimit {
+		return minInviteRoomLimit
+	}
+	if limit > maxInviteRoomLimit {
+		return maxInviteRoomLimit
+	}
+	return limit
+}
+
+func parseInviteRoomLimit(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultInviteRoomLimit, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("room_limit must be an integer between %d and %d", minInviteRoomLimit, maxInviteRoomLimit)
+	}
+	if n < minInviteRoomLimit || n > maxInviteRoomLimit {
+		return 0, fmt.Errorf("room_limit must be between %d and %d", minInviteRoomLimit, maxInviteRoomLimit)
+	}
+	return n, nil
 }
 
 func (c *wsClient) enqueueJSON(v any) error {

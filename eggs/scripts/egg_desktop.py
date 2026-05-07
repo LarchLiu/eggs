@@ -63,6 +63,9 @@ DEFAULT_ANIMATIONS = [
 ]
 DEFAULT_STATE = "unborn"
 DEFAULT_SERVER_URL = "http://localhost:8787"
+DEFAULT_ROOM_LIMIT = 5
+MIN_ROOM_LIMIT = 2
+MAX_ROOM_LIMIT = 100
 HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; EggsDesktop/1.0; +https://eggs.larch.fun)",
 }
@@ -404,6 +407,7 @@ def default_remote_config() -> dict:
         "enabled": False,
         "mode": "random",
         "room": "",
+        "room_limit": DEFAULT_ROOM_LIMIT,
         "sprite": "",
     }
 
@@ -426,6 +430,7 @@ def read_remote_config() -> dict:
     config["enabled"] = bool(config.get("enabled", False))
     config["mode"] = "room" if config.get("mode") == "room" else "random"
     config["room"] = str(config.get("room", "")).strip()
+    config["room_limit"] = normalize_room_limit(config.get("room_limit"))
     config["sprite"] = normalize_sprite(config.get("sprite") or read_sprite())
     return config
 
@@ -438,6 +443,32 @@ def write_remote_config(config: dict) -> None:
 
 def sync_remote_sprite(sprite: str) -> None:
     write_remote_config({"sprite": normalize_sprite(sprite)})
+
+
+def normalize_room_limit(value: object) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_ROOM_LIMIT
+    if limit <= 0:
+        return DEFAULT_ROOM_LIMIT
+    if limit < MIN_ROOM_LIMIT:
+        return MIN_ROOM_LIMIT
+    if limit > MAX_ROOM_LIMIT:
+        return MAX_ROOM_LIMIT
+    return limit
+
+
+def parse_room_limit_arg(value: str | None) -> tuple[int | None, str | None]:
+    if value is None or not value.strip():
+        return DEFAULT_ROOM_LIMIT, None
+    try:
+        limit = int(value.strip())
+    except ValueError:
+        return None, f"room limit must be an integer between {MIN_ROOM_LIMIT} and {MAX_ROOM_LIMIT}"
+    if limit < MIN_ROOM_LIMIT or limit > MAX_ROOM_LIMIT:
+        return None, f"room limit must be between {MIN_ROOM_LIMIT} and {MAX_ROOM_LIMIT}"
+    return limit, None
 
 
 def set_state(value: str, sprite_name: str | None = None) -> int:
@@ -1041,12 +1072,14 @@ def apply_remote_runtime_change(ensure_running: bool = False) -> None:
     start_remote_sidecar()
 
 
-def remote_command(action: str | None, value: str | None = None) -> int:
+def remote_command(action: str | None, value: str | None = None, extra: str | None = None) -> int:
     if action == "status":
         remote = read_remote_config()
         print(
             f"remote enabled={remote['enabled']} server={remote['server_url']} "
-            f"mode={remote['mode']} room={remote.get('room', '') or '-'} sprite={remote.get('sprite', '') or '-'}"
+            f"mode={remote['mode']} room={remote.get('room', '') or '-'} "
+            f"room_limit={remote.get('room_limit', DEFAULT_ROOM_LIMIT)} "
+            f"sprite={remote.get('sprite', '') or '-'}"
         )
         return 0
     if not action:
@@ -1084,15 +1117,19 @@ def remote_command(action: str | None, value: str | None = None) -> int:
         return 0
     if action == "room":
         if not value:
-            print("usage: egg_desktop.py remote room <code>", file=sys.stderr)
+            print("usage: egg_desktop.py remote room <code> [limit]", file=sys.stderr)
+            return 2
+        room_limit, room_limit_error = parse_room_limit_arg(extra)
+        if room_limit_error:
+            print(room_limit_error, file=sys.stderr)
             return 2
         sprite = read_sprite()
         if not ensure_remote_sprite_uploaded(sprite, quiet=True):
             print(f"remote room not enabled: could not prepare sprite {sprite} on the server", file=sys.stderr)
             return 1
-        write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "sprite": sprite})
+        write_remote_config({"enabled": True, "mode": "room", "room": value.strip(), "room_limit": room_limit, "sprite": sprite})
         apply_remote_runtime_change(ensure_running=True)
-        print(f"remote room enabled: {value.strip()}")
+        print(f"remote room enabled: {value.strip()} (limit={room_limit})")
         return 0
     if action == "leave":
         write_remote_config({"enabled": False, "mode": "random", "room": ""})
@@ -1517,6 +1554,7 @@ class RemoteSession:
                 "device_id": self.client["device_id"],
                 "mode": self.remote.get("mode", "random"),
                 "room": self.remote.get("room", ""),
+                "room_limit": str(self.remote.get("room_limit", DEFAULT_ROOM_LIMIT)),
                 "sprite": normalize_sprite(self.remote.get("sprite") or read_sprite()),
             }
             url = websocket_url(self.remote["server_url"], query)
@@ -2180,6 +2218,7 @@ def main() -> int:
     )
     parser.add_argument("path", nargs="?", help="PNG spritesheet path, sprite name, companion state, or remote action.")
     parser.add_argument("name", nargs="?", help="Optional sprite name, remote value, or room code.")
+    parser.add_argument("extra", nargs="?", help="Optional extra value such as room limit.")
     args = parser.parse_args()
 
     if args.command == "start":
@@ -2213,7 +2252,7 @@ def main() -> int:
             return 2
         return install_spritesheet(args.path, args.name)
     if args.command == "remote":
-        return remote_command(args.path, args.name)
+        return remote_command(args.path, args.name, args.extra)
     return 2
 
 

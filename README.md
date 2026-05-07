@@ -151,6 +151,7 @@ Join the random match pool or an invite room:
 cd eggs
 python3 scripts/egg_desktop.py remote
 python3 scripts/egg_desktop.py remote room ABC123
+python3 scripts/egg_desktop.py remote room ABC123 7
 python3 scripts/egg_desktop.py remote status
 ```
 
@@ -162,7 +163,7 @@ python3 scripts/egg_desktop.py remote leave
 python3 scripts/egg_desktop.py remote off
 ```
 
-`remote` with no subcommand now uses the saved `remote.json` mode/room; when `mode=room` but the saved room code is empty, it falls back to random mode. `remote random` switches only the mode and preserves any saved room code for later reuse, while `remote status` shows the current remote config.
+`remote` with no subcommand now uses the saved `remote.json` mode/room; when `mode=room` but the saved room code is empty, it falls back to random mode. Invite rooms default to `5` peers, and `remote room <code> [limit]` lets the first entrant lock a different cap for that room. `remote random` switches only the mode and preserves any saved room code for later reuse, while `remote status` shows the current remote config.
 
 When remote interaction is enabled, the desktop companion still renders with the native Swift/Cocoa runtime on macOS. A separate Python sidecar process handles WebSocket sync and writes `~/.codex/eggs/remote-peers.json` (`connected`, `reconnecting`, `error`, and current peers) for the Swift runtime to consume.
 
