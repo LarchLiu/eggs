@@ -58,8 +58,23 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                 0
             }
             Ok(pets) => {
-                for p in pets {
-                    println!("{}\t{}", p.id, p.display_name);
+                let local: Vec<_> = pets.iter().filter(|p| !p.remote).collect();
+                let remote: Vec<_> = pets.iter().filter(|p| p.remote).collect();
+                let has_local = !local.is_empty();
+                if !local.is_empty() {
+                    println!("Local");
+                    for p in &local {
+                        println!("{}\t{}", p.id, p.display_name);
+                    }
+                }
+                if !remote.is_empty() {
+                    if has_local {
+                        println!();
+                    }
+                    println!("Remote");
+                    for p in &remote {
+                        println!("{}\t{}", p.id, p.display_name);
+                    }
                 }
                 0
             }

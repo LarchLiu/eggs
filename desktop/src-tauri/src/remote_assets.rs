@@ -1,13 +1,13 @@
 // Cached download of remote peer sprite assets.
 //
 // Mirrors the Python reference (egg_desktop.py:cache_remote_sprite). The
-// server publishes per-upload assets at /assets/<sprite_id>/{sprite.<ext>,
-// sprite.json, config.json}; the trailing <sprite_id> is content-stable
-// (a fresh upload gets a fresh id) so we can use it as the cache directory
-// name. Multiple peers running the same sprite share one cache entry.
+// server publishes per-upload assets at /assets/<content_id>/{sprite.<ext>,
+// sprite.json, config.json}; the trailing <content_id> is content-stable, so
+// we can use it as the cache directory name. Multiple peers running the same
+// sprite share one cache entry.
 //
 // Layout under ~/.eggs/remote/:
-//   <sprite_id>/
+//   <content_id>/
 //     pet.json
 //     spritesheet.png  (or .webp, depending on the original upload)
 //     config.json (optional)
@@ -63,7 +63,7 @@ pub fn cache_root() -> PathBuf {
     state::app_dir().join("remote")
 }
 
-/// List cached remote sprite ids under ~/.eggs/remote/<sprite_id>/.
+/// List cached remote sprite ids under ~/.eggs/remote/<content_id>/.
 /// Only returns directories that look like a cached sprite bundle
 /// (must include a manifest plus a sprite image file).
 pub fn list_cached_sprite_ids() -> std::io::Result<Vec<String>> {
@@ -169,7 +169,7 @@ async fn download_if_missing(
 }
 
 /// Pull the second-to-last path segment, which the server uses as the
-/// per-upload asset id (`/assets/<id>/sprite.png`).
+/// content-addressed asset id (`/assets/<content_id>/sprite.png`).
 fn asset_id_from_url(raw: &str) -> Option<String> {
     let parsed = url::Url::parse(raw).ok()?;
     let mut segs: Vec<&str> = parsed.path_segments()?.filter(|s| !s.is_empty()).collect();

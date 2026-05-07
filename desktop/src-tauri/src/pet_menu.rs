@@ -8,6 +8,8 @@ use crate::remote;
 use crate::state::{self, RuntimeState};
 
 const PET_PREFIX: &str = "pet:";
+const PET_HEADER_LOCAL_ID: &str = "pet-header:local";
+const PET_HEADER_REMOTE_ID: &str = "pet-header:remote";
 const STATE_PREFIX: &str = "state:";
 const SCALE_PREFIX: &str = "scale:";
 const QUIT_ID: &str = "quit";
@@ -59,7 +61,50 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let pets = pet::list_installed_pets().map_err(|e| e.to_string())?;
 
     let pet_submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
-    for info in pets {
+    let (local_pets, remote_pets): (Vec<_>, Vec<_>) =
+        pets.into_iter().partition(|info| !info.remote);
+    let has_local_pets = !local_pets.is_empty();
+    let has_remote_pets = !remote_pets.is_empty();
+    if has_local_pets {
+        let header = MenuItem::with_id(
+            app,
+            PET_HEADER_LOCAL_ID,
+            "Local",
+            false,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        pet_submenu.append(&header).map_err(|e| e.to_string())?;
+    }
+    for info in local_pets {
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("{PET_PREFIX}{}", info.id),
+            info.display_name,
+            true,
+            info.id == current.pet,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        pet_submenu.append(&item).map_err(|e| e.to_string())?;
+    }
+    if has_local_pets && has_remote_pets {
+        pet_submenu
+            .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    }
+    if has_remote_pets {
+        let header = MenuItem::with_id(
+            app,
+            PET_HEADER_REMOTE_ID,
+            "Remote",
+            false,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        pet_submenu.append(&header).map_err(|e| e.to_string())?;
+    }
+    for info in remote_pets {
         let item = CheckMenuItem::with_id(
             app,
             format!("{PET_PREFIX}{}", info.id),

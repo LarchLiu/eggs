@@ -106,45 +106,52 @@ pub fn list_installed_pets() -> io::Result<Vec<PetInfo>> {
         if !root.path.exists() {
             continue;
         }
-        for entry in fs::read_dir(&root.path)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let entry_path = entry.path();
-            let entry_id = entry.file_name().to_string_lossy().to_string();
-            let requested_id = if root.kind == PetRootKind::RemoteCache {
-                Some(entry_id.as_str())
-            } else {
-                None
-            };
-            let Some((m, manifest_path)) =
-                load_manifest_from_dir(&entry_path, root.kind, requested_id)
-            else {
-                continue;
-            };
-            if !seen.insert(m.id.clone()) {
-                // First occurrence wins (higher-priority dir already had it).
-                continue;
-            }
-            let display_name = if root.kind == PetRootKind::RemoteCache {
-                if m.display_name.trim().is_empty() {
-                    format!("{} [remote]", m.id)
-                } else {
-                    format!("{} [remote]", m.display_name)
+        match root.kind {
+            PetRootKind::Installed => {
+                for entry in fs::read_dir(&root.path)? {
+                    let entry = entry?;
+                    if !entry.file_type()?.is_dir() {
+                        continue;
+                    }
+                    let Some((m, manifest_path)) =
+                        load_manifest_from_dir(&entry.path(), root.kind, None)
+                    else {
+                        continue;
+                    };
+                    if !seen.insert(m.id.clone()) {
+                        // First occurrence wins (higher-priority dir already had it).
+                        continue;
+                    }
+                    pets.push(PetInfo {
+                        id: m.id,
+                        display_name: m.display_name,
+                        manifest_path,
+                        remote: false,
+                    });
                 }
-            } else {
-                m.display_name
-            };
-            pets.push(PetInfo {
-                id: m.id,
-                display_name,
-                manifest_path,
-                remote: root.kind == PetRootKind::RemoteCache,
-            });
+            }
+            PetRootKind::RemoteCache => {
+                for entry_id in crate::remote_assets::list_cached_sprite_ids()? {
+                    let entry_path = root.path.join(&entry_id);
+                    let Some((m, manifest_path)) =
+                        load_manifest_from_dir(&entry_path, root.kind, Some(entry_id.as_str()))
+                    else {
+                        continue;
+                    };
+                    if !seen.insert(m.id.clone()) {
+                        continue;
+                    }
+                    pets.push(PetInfo {
+                        id: m.id,
+                        display_name: m.display_name,
+                        manifest_path,
+                        remote: true,
+                    });
+                }
+            }
         }
     }
-    pets.sort_by(|a, b| a.id.cmp(&b.id));
+    pets.sort_by(|a, b| a.remote.cmp(&b.remote).then_with(|| a.id.cmp(&b.id)));
     Ok(pets)
 }
 

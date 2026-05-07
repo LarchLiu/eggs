@@ -51,7 +51,7 @@ func newTestServer(t *testing.T) (*server, *localTestServer) {
 			roomByClient:  map[string]string{},
 			onlineSprites: map[string]*wsClient{},
 		},
-		assetCache:    &assetCache{byID: map[string]assetPaths{}},
+		assetCache:    &assetCache{byContentID: map[string]assetPaths{}},
 		deviceCleanup: &deviceCleanupState{},
 	}
 	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
@@ -183,6 +183,12 @@ func TestDuplicateUploadDifferentDevicesReuseFiles(t *testing.T) {
 	if first["id"] == second["id"] {
 		t.Fatalf("different devices should keep distinct sprite records")
 	}
+	if first["content_id"] == "" || second["content_id"] == "" {
+		t.Fatalf("missing content_id: first=%#v second=%#v", first, second)
+	}
+	if first["content_id"] != second["content_id"] {
+		t.Fatalf("expected shared content_id, got %v vs %v", first["content_id"], second["content_id"])
+	}
 
 	var rows int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sprites`).Scan(&rows); err != nil {
@@ -215,12 +221,12 @@ func TestDuplicateUploadDifferentDevicesReuseFiles(t *testing.T) {
 func TestAssetRequestUsesCacheAfterWarmup(t *testing.T) {
 	s, ts := newTestServer(t)
 	record := uploadTestSprite(t, ts.URL, "device-a", "dino")
-	id, _ := record["id"].(string)
-	if id == "" {
-		t.Fatalf("missing id in record: %#v", record)
+	contentID, _ := record["content_id"].(string)
+	if contentID == "" {
+		t.Fatalf("missing content_id in record: %#v", record)
 	}
 
-	resp, err := http.Get(ts.URL + "/assets/" + id + "/sprite.json")
+	resp, err := http.Get(ts.URL + "/assets/" + contentID + "/sprite.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,15 +235,15 @@ func TestAssetRequestUsesCacheAfterWarmup(t *testing.T) {
 		t.Fatalf("warmup asset status=%d", resp.StatusCode)
 	}
 
-	if _, ok := s.assetCacheLookup(id); !ok {
-		t.Fatalf("expected asset cache to contain %q after warmup", id)
+	if _, ok := s.assetCacheLookup(contentID); !ok {
+		t.Fatalf("expected asset cache to contain %q after warmup", contentID)
 	}
 
-	if _, err := s.db.Exec(`DELETE FROM sprites WHERE id=?`, id); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM sprites WHERE content_id=?`, contentID); err != nil {
 		t.Fatal(err)
 	}
 
-	resp, err = http.Get(ts.URL + "/assets/" + id + "/sprite.json")
+	resp, err = http.Get(ts.URL + "/assets/" + contentID + "/sprite.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,8 +289,8 @@ func TestRejectInvalidMetadata(t *testing.T) {
 		"device_id":   "device-a",
 		"sprite_name": "bad",
 	}, map[string][]byte{
-		"sprite":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
-		"json": []byte(`{"frameWidth":0}`),
+		"sprite": {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"json":   []byte(`{"frameWidth":0}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -304,8 +310,8 @@ func TestUploadPetWebPManifest(t *testing.T) {
 		"sprite_name":  "noir-webling",
 		"display_name": "Noir Webling",
 	}, map[string][]byte{
-		"sprite":  webpFixture(),
-		"json": manifest,
+		"sprite": webpFixture(),
+		"json":   manifest,
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -360,8 +366,8 @@ func TestRejectPetManifestMissingSpritesheetPath(t *testing.T) {
 		"device_id":   "device-pet",
 		"sprite_name": "orphan",
 	}, map[string][]byte{
-		"sprite":  webpFixture(),
-		"json": manifest,
+		"sprite": webpFixture(),
+		"json":   manifest,
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -380,8 +386,8 @@ func TestRejectUnknownSpritesheetFormat(t *testing.T) {
 		"device_id":   "device-pet",
 		"sprite_name": "junk",
 	}, map[string][]byte{
-		"sprite":  []byte("definitely not an image"),
-		"json": []byte(`{"id":"junk","spritesheetPath":"x.webp"}`),
+		"sprite": []byte("definitely not an image"),
+		"json":   []byte(`{"id":"junk","spritesheetPath":"x.webp"}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -400,7 +406,7 @@ func TestUploadHashOnlyMissingBlob(t *testing.T) {
 	body, contentType := multipartUploadBody(t, map[string]string{
 		"device_id":   "device-cold",
 		"sprite_name": "noir-webling",
-		"sprite_hash":    spriteHash,
+		"sprite_hash": spriteHash,
 		"json_hash":   jsonHash,
 	}, map[string][]byte{})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
@@ -436,8 +442,8 @@ func TestUploadHashOnlyAfterCrossDeviceUpload(t *testing.T) {
 		"sprite_name":  "noir-webling",
 		"display_name": "Noir Webling",
 	}, map[string][]byte{
-		"sprite":  spriteBytes,
-		"json": manifest,
+		"sprite": spriteBytes,
+		"json":   manifest,
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -461,7 +467,7 @@ func TestUploadHashOnlyAfterCrossDeviceUpload(t *testing.T) {
 		"device_id":    "device-b",
 		"sprite_name":  "noir-webling",
 		"display_name": "Noir Webling",
-		"sprite_hash":     spriteHash,
+		"sprite_hash":  spriteHash,
 		"json_hash":    jsonHash,
 	}, map[string][]byte{})
 	resp2, err := http.Post(ts.URL+"/api/v1/sprites", contentType2, bytes.NewReader(body2))
@@ -481,6 +487,9 @@ func TestUploadHashOnlyAfterCrossDeviceUpload(t *testing.T) {
 	// Different sprite_id (per-device row), same sprite_hash + json_hash.
 	if bRecord["id"] == aRecord["id"] {
 		t.Fatalf("expected new sprite row for device-b, got same id %v", aRecord["id"])
+	}
+	if bRecord["content_id"] != aRecord["content_id"] {
+		t.Fatalf("expected shared content_id, got first=%v second=%v", aRecord["content_id"], bRecord["content_id"])
 	}
 	if bRecord["sprite_hash"] != spriteHash || bRecord["json_hash"] != jsonHash {
 		t.Fatalf("hashes drifted: %#v", bRecord)
@@ -503,10 +512,10 @@ func TestUploadRejectsHashMismatch(t *testing.T) {
 	body, contentType := multipartUploadBody(t, map[string]string{
 		"device_id":   "device-pet",
 		"sprite_name": "noir-webling",
-		"sprite_hash":    strings.Repeat("a", 64), // 64 hex chars but wrong content
+		"sprite_hash": strings.Repeat("a", 64), // 64 hex chars but wrong content
 	}, map[string][]byte{
-		"sprite":  spriteBytes,
-		"json": []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
+		"sprite": spriteBytes,
+		"json":   []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -524,10 +533,10 @@ func TestUploadRejectsMalformedHashHint(t *testing.T) {
 	body, contentType := multipartUploadBody(t, map[string]string{
 		"device_id":   "device-pet",
 		"sprite_name": "noir-webling",
-		"sprite_hash":    "not-a-real-hash",
+		"sprite_hash": "not-a-real-hash",
 	}, map[string][]byte{
-		"sprite":  webpFixture(),
-		"json": []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
+		"sprite": webpFixture(),
+		"json":   []byte(`{"id":"noir-webling","spritesheetPath":"spritesheet.webp"}`),
 	})
 	resp, err := http.Post(ts.URL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
@@ -784,8 +793,8 @@ func uploadTestSpriteWithStatus(t *testing.T, baseURL string, deviceID string, s
 		"sprite_name":  sprite,
 		"display_name": sprite,
 	}, map[string][]byte{
-		"sprite":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
-		"json": []byte(`{"frameWidth":251,"frameHeight":251,"columns":1,"rows":1,"frameCount":1,"image":"` + sprite + `.png"}`),
+		"sprite": {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+		"json":   []byte(`{"frameWidth":251,"frameHeight":251,"columns":1,"rows":1,"frameCount":1,"image":"` + sprite + `.png"}`),
 	})
 	resp, err := http.Post(baseURL+"/api/v1/sprites", contentType, bytes.NewReader(body))
 	if err != nil {
