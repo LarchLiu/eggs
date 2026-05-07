@@ -77,9 +77,15 @@ Flags:
 - `GET /api/v1/sprites`: list public sprites. Use `?random=1&limit=10` for random results. The random list path uses an index-friendly random cursor strategy rather than `ORDER BY random()`.
 - `GET /api/v1/sprites?device_id=<id>&sprite_name=<name>`: fetch the latest sprite metadata record for one owner/name pair, or `{"sprite":null}` when that owner has not uploaded the named sprite.
 - `GET /api/v1/sprites/{sprite_id}`: fetch one sprite metadata record for public listing or upload management.
-- `GET /assets/{sprite_id}/sprite.png`: fetch uploaded PNG.
-- `GET /assets/{sprite_id}/sprite.json`: fetch uploaded spritesheet metadata.
-- `GET /assets/{sprite_id}/config.json`: fetch optional animation config.
+- `GET /assets/{content_id}/sprite.png`: fetch uploaded PNG.
+- `GET /assets/{content_id}/sprite.json`: fetch uploaded spritesheet metadata.
+- `GET /assets/{content_id}/config.json`: fetch optional animation config.
+
+The metadata record `id` (`sprite_id`) is a per-upload row id. Asset URLs are
+content-addressed by `content_id`, which is derived from
+`sprite_hash + json_hash + config_hash`. Different devices can therefore keep
+distinct sprite records while still sharing the same `content_id` and asset
+URLs when the uploaded bytes are identical.
 
 ## WebSocket
 
@@ -87,7 +93,7 @@ Flags:
 GET /ws?device_id=<id>&sprite=<name>&mode=random|room&room=<code>
 ```
 
-All live interaction is strictly 1-to-1. When `mode=random`, the server places the client into a waiting pool until it can pair with exactly one other online peer using a different sprite. After a match is found, the server creates a temporary private room for that pair. The same uploaded `sprite_id` cannot be online more than once anywhere on the server. Invite rooms are also capped at two peers.
+All live interaction is strictly 1-to-1. When `mode=random`, the server places the client into a waiting pool until it can pair with exactly one other online peer using a different sprite. After a match is found, the server creates a temporary private room for that pair. The same uploaded sprite record cannot be online more than once anywhere on the server. Invite rooms are also capped at two peers.
 
 Client messages:
 
@@ -106,7 +112,7 @@ Broadcast messages:
 
 Newly joined clients first receive a `room_snapshot` containing the currently online peers in that room, including each peer's current sprite metadata plus latest known state. Incremental updates then arrive as `peer_joined`, `peer_left`, `peer_state`, `peer_action`, and `peer_sprite_changed`.
 
-Each peer broadcast includes `peer_id`, `device_id`, and an embedded `sprite` object with that peer's sprite metadata and asset URLs. Room interaction does not depend on `/api/v1/sprites/{sprite_id}` lookups.
+Each peer broadcast includes `peer_id`, `device_id`, and an embedded `sprite` object with that peer's sprite metadata and asset URLs. Room interaction does not depend on `/api/v1/sprites/{sprite_id}` lookups, and peer asset downloads use the broadcast `content_id`-backed asset URLs directly.
 
 The server is owner-authoritative: it stores metadata and forwards room messages, but it does not simulate movement or gameplay.
 

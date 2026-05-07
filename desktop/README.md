@@ -110,7 +110,11 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 - `eggs` / `eggs run` — launch foreground GUI (blocks current shell).
 - `eggs start` / `eggs stop` — fork detached GUI / SIGTERM the running one (matches `egg_desktop.py:start_background` / `stop_background`).
 - `eggs pet <id>` — switch active pet; in remote mode also pushes new sprite to the server before broadcasting to peers.
-- `eggs remote` / `eggs remote room <code>` — enter random / room mode; uploads sprite if needed, writes `remote.json`, then ensures the GUI is running.
+- `eggs remote` — enable remote using the saved `remote.json` mode/room; when `mode=room` but `room` is empty it falls back to random matchmaking.
+- `eggs remote room <code>` — save room mode with an invite code, upload the sprite if needed, and ensure the GUI is running.
+- `eggs remote random` — switch to random mode without clearing any saved room code from `remote.json`.
+- `eggs remote leave` — leave current room/pair while keeping remote enabled.
+- `eggs remote off` — disable remote without changing saved mode/room.
 - `eggs install <pet-dir>` — copy a pet folder into `~/.eggs/pets/`.
 - `eggs status` / `eggs list`.
 
@@ -129,10 +133,10 @@ Override with the `EGGS_APP_DIR` environment variable (handy for tests).
 |---|---|
 | `state.json` | Current `pet`, animation `state`, `scale_millis` |
 | `client.json` | Anonymous device id (auto-generated UUID v4) |
-| `remote.json` | Server URL, enabled flag, mode (random / room), room code, sprite |
+| `remote.json` | Server URL, enabled flag, saved mode (random / room), optional saved room code, reconnect `session_nonce` |
 | `eggs.pid` | Running GUI's PID, used by `eggs stop` |
 | `pets/<id>/` | Installed pet manifests + spritesheets |
-| `remote/blobs/`, `remote/<peer_id>/` | Cached remote peer assets |
+| `remote/blobs/`, `remote/<content_id>/` | Cached remote peer assets |
 
 Pet folder layout (matching the Codex hatch-pet contract):
 

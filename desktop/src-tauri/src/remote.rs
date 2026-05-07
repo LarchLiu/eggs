@@ -118,11 +118,21 @@ pub fn read_remote_config() -> RemoteConfig {
     if cfg.server_url.is_empty() {
         cfg.server_url = default_server_url();
     }
-    if cfg.mode != "room" {
-        cfg.mode = "random".to_string();
-    }
+    cfg.mode = normalize_mode(&cfg.mode, &cfg.room);
     cfg.room = cfg.room.trim().to_string();
     cfg
+}
+
+fn normalize_mode(mode: &str, room: &str) -> String {
+    let normalized_mode = mode.trim().to_ascii_lowercase();
+    let has_room = !room.trim().is_empty();
+    match normalized_mode.as_str() {
+        "room" if has_room => "room".to_string(),
+        "room" => "random".to_string(),
+        "random" => "random".to_string(),
+        _ if has_room => "room".to_string(),
+        _ => default_mode(),
+    }
 }
 
 pub fn write_remote_config(cfg: &RemoteConfig) -> std::io::Result<()> {

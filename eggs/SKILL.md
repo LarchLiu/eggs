@@ -43,7 +43,7 @@ Remote interaction is opt-in. To connect this skill to a separately deployed rem
 ./eggs remote status
 ```
 
-`remote` joins the server-side random waiting pool by default (equivalent to `remote random`) and also brings the GUI up if it isn't running. After a match is found, the server creates a temporary private room for that pair.
+`remote` enables remote using the saved `~/.eggs/remote.json` config and also brings the GUI up if it isn't running. If the saved config is `mode=room` with a non-empty room code, it rejoins that room; otherwise it falls back to random matchmaking. After a random match is found, the server creates a temporary private room for that pair.
 
 For invite rooms:
 
@@ -51,10 +51,16 @@ For invite rooms:
 ./eggs remote room ABC123
 ```
 
-To leave:
+To leave the current room/pair while keeping remote enabled:
 
 ```bash
 ./eggs remote leave
+```
+
+To disable remote interaction entirely:
+
+```bash
+./eggs remote off
 ```
 
 For state changes:
@@ -154,7 +160,10 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - Runtime data lives at `~/.eggs/` (Windows: `C:\Users\<n>\.eggs\`). Override via `EGGS_APP_DIR`. State, remote config, device id, PID file, cached peer assets all share that one folder.
 - Pets live at `~/.eggs/pets/<id>/` (each with `pet.json` + a spritesheet). The runtime also still reads `~/.codex/pets/<id>/` for backward compatibility with the legacy Python skill.
 - The transparent always-on-top window is 192x208 (8x9 atlas with 192x208 cells per the Codex pet contract); the user can rescale via the right-click context menu (0.4x / 0.5x / 0.6x / 0.8x / 1.0x). Peer windows on screen mirror the local scale and follow the local pet during drag.
-- Remote interaction is opt-in. Settings live in `~/.eggs/remote.json`, anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<peer_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
+- Remote interaction is opt-in. Settings live in `~/.eggs/remote.json` (`server_url`, `enabled`, `mode`, `room`, `session_nonce`), anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<content_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
+- `remote` / `remote on` preserve the saved `mode` and `room` in `remote.json`; `remote random` switches only the mode and keeps any saved room code for later reuse.
+- `mode=room` only stays in room mode when `room` is non-empty; an empty room code automatically falls back to `random`.
+- `remote leave` bumps `session_nonce` to force a reconnect cycle (leave room/pair) without flipping `enabled` to `false`.
 - Hash-skip upload: when remote is enabled and the user switches pet, the client first POSTs `(sprite_hash, json_hash)` only; the server replies 200 if the row already exists, 201 if the blobs already exist server-side (a fresh row gets registered for this device, zero bytes shipped), or 404 listing missing blobs (client retries phase 2 with bytes).
 - The remote Go server is not part of the installed skill; it lives at the repository root under `server/` and should be deployed separately.
 - The launcher itself (`./eggs` / `eggs.cmd`) is committed to the skill; the binary it caches is not. The launcher reuses any `eggs` already on `$PATH` (e.g. when the user installed the standalone Eggs.app GUI) before falling back to download.

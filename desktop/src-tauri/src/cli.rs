@@ -270,7 +270,37 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
     let action = argv.get(2).map(String::as_str).unwrap_or("");
     let value = argv.get(3).map(String::as_str);
     match action {
-        "" | "random" => {
+        "" => {
+            let pet_id = match resolve_pet_for_upload() {
+                Ok(id) => id,
+                Err(code) => return code,
+            };
+            if let Err(code) = run_pet_upload(&pet_id, /*quiet=*/ true) {
+                return code;
+            }
+            match crate::remote::update_remote_config(|cfg| cfg.enabled = true) {
+                Ok(cfg) => {
+                    ensure_gui_running();
+                    if cfg.mode == "room" {
+                        println!(
+                            "remote room enabled: {} (server={}, sprite={})",
+                            cfg.room, cfg.server_url, pet_id
+                        );
+                    } else {
+                        println!(
+                            "remote random match pool enabled (server={}, sprite={})",
+                            cfg.server_url, pet_id
+                        );
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            }
+        }
+        "random" => {
             let pet_id = match resolve_pet_for_upload() {
                 Ok(id) => id,
                 Err(code) => return code,
@@ -281,7 +311,6 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
             match crate::remote::update_remote_config(|cfg| {
                 cfg.enabled = true;
                 cfg.mode = "random".to_string();
-                cfg.room.clear();
             }) {
                 Ok(cfg) => {
                     ensure_gui_running();
@@ -350,19 +379,7 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
                 }
             }
         }
-        "on" => match crate::remote::update_remote_config(|cfg| cfg.enabled = true) {
-            Ok(cfg) => {
-                println!(
-                    "remote interaction enabled (mode={}, server={})",
-                    cfg.mode, cfg.server_url
-                );
-                0
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                1
-            }
-        },
+        "on" => run_remote_subcommand(&[argv[0].clone(), argv[1].clone()]),
         "off" => match crate::remote::update_remote_config(|cfg| cfg.enabled = false) {
             Ok(_) => {
                 println!("remote interaction disabled");
@@ -548,7 +565,7 @@ fn print_remote_help() {
     eprintln!("eggs remote — multiplayer with the Go server (server/main.go)");
     eprintln!();
     eprintln!("usage:");
-    eprintln!("  eggs remote                 enable random match pool (alias of `random`)");
+    eprintln!("  eggs remote                 enable using saved remote.json mode/room");
     eprintln!("  eggs remote random          enable random match pool");
     eprintln!("  eggs remote room <code>     enable room mode with invite code");
     eprintln!("  eggs remote leave           leave current room/pair, keep remote enabled");
@@ -559,6 +576,8 @@ fn print_remote_help() {
     eprintln!("  eggs remote upload [<id>]   force re-upload of <id> (default: current pet)");
     eprintln!();
     eprintln!("notes:");
+    eprintln!("  * bare `remote` and `remote on` preserve the saved `mode` / `room` in");
+    eprintln!("    ~/.eggs/remote.json instead of forcing random mode.");
     eprintln!("  * `random` and `room` auto-upload the current pet first; the server");
     eprintln!("    skips body upload when (sprite_hash, json_hash) already match (~1 RTT).");
     eprintln!("  * `random` and `room` also bring up the pet GUI if it isn't running");

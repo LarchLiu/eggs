@@ -223,11 +223,11 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
         }
         REMOTE_MODE_RANDOM_ID => {
             // "Random Match" both enables remote and switches mode in one
-            // click — matches the CLI semantics of `eggs remote random`.
+            // click. Preserve any saved room code so the user can switch back
+            // to room mode later without retyping it.
             update_remote(|cfg| {
                 cfg.enabled = true;
                 cfg.mode = "random".to_string();
-                cfg.room.clear();
             });
         }
         REMOTE_MODE_ROOM_ID => {
