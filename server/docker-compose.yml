@@ -12,9 +12,14 @@ services:
     volumes:
       - eggs-server-data:/data
     command:
-      - /bin/sh
-      - -lc
-      - exec eggs-server -addr :8787 -data /data -base-url "$EGGS_BASE_URL" -public-by-default "$EGGS_PUBLIC_BY_DEFAULT"
+      - -addr
+      - :8787
+      - -data
+      - /data
+      - -base-url
+      - ${EGGS_BASE_URL:-http://localhost:8787}
+      - -public-by-default
+      - ${EGGS_PUBLIC_BY_DEFAULT:-true}
     restart: unless-stopped
 
 volumes:
