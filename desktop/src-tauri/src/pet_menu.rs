@@ -1,15 +1,22 @@
 use std::sync::Mutex;
 
-use tauri::menu::{CheckMenuItem, Menu, MenuId, MenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, LogicalSize, Manager, Size, WebviewWindow};
 
 use crate::pet;
+use crate::remote;
 use crate::state::{self, RuntimeState};
 
 const PET_PREFIX: &str = "pet:";
 const STATE_PREFIX: &str = "state:";
 const SCALE_PREFIX: &str = "scale:";
 const QUIT_ID: &str = "quit";
+
+const REMOTE_TOGGLE_ID: &str = "remote:toggle";
+const REMOTE_MODE_RANDOM_ID: &str = "remote:mode:random";
+const REMOTE_MODE_ROOM_ID: &str = "remote:mode:room";
+const REMOTE_UPLOAD_ID: &str = "remote:upload";
+const REMOTE_LEAVE_ID: &str = "remote:leave";
 
 pub const PET_STATES: [&str; 9] = [
     "idle",
@@ -97,10 +104,13 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let quit_item = MenuItem::with_id(app, QUIT_ID, "Quit", true, Option::<&str>::None)
         .map_err(|e| e.to_string())?;
 
+    let remote_submenu = build_remote_submenu(app)?;
+
     let menu = Menu::new(app).map_err(|e| e.to_string())?;
     menu.append(&pet_submenu).map_err(|e| e.to_string())?;
     menu.append(&state_submenu).map_err(|e| e.to_string())?;
     menu.append(&scale_submenu).map_err(|e| e.to_string())?;
+    menu.append(&remote_submenu).map_err(|e| e.to_string())?;
     menu.append(&quit_item).map_err(|e| e.to_string())?;
 
     let store = app.state::<PetMenuStore>();
@@ -159,6 +169,41 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
                 let _ = window.set_size(size);
             }
         }
+        return;
+    }
+
+    match id {
+        REMOTE_TOGGLE_ID => {
+            update_remote(|cfg| cfg.enabled = !cfg.enabled);
+        }
+        REMOTE_MODE_RANDOM_ID => {
+            // "Random Match" both enables remote and switches mode in one
+            // click — matches the CLI semantics of `eggs remote random`.
+            update_remote(|cfg| {
+                cfg.enabled = true;
+                cfg.mode = "random".to_string();
+                cfg.room.clear();
+            });
+        }
+        REMOTE_MODE_ROOM_ID => {
+            // Re-engage the saved room code from remote.json. New codes
+            // still need `eggs remote room <code>` (no menu input).
+            update_remote(|cfg| {
+                cfg.enabled = true;
+                cfg.mode = "room".to_string();
+            });
+        }
+        REMOTE_UPLOAD_ID => {
+            spawn_remote_upload();
+        }
+        REMOTE_LEAVE_ID => {
+            update_remote(|cfg| {
+                cfg.enabled = false;
+                cfg.mode = "random".to_string();
+                cfg.room.clear();
+            });
+        }
+        _ => {}
     }
 }
 
@@ -169,4 +214,140 @@ where
     let current = state::read_state().map_err(|e| e.to_string())?;
     let next = f(current);
     state::write_state(&next).map_err(|e| e.to_string())
+}
+
+/// Build the right-click "Remote" submenu off the live `remote.json` config.
+/// Text-input actions (set room code, change server URL) stay CLI-only since
+/// the native menu primitives don't have an input field; the menu still
+/// covers the full toggle / mode-switch / upload / leave surface.
+fn build_remote_submenu(app: &AppHandle) -> Result<Submenu<tauri::Wry>, String> {
+    let cfg = remote::read_remote_config();
+    let submenu = Submenu::new(app, "Remote", true).map_err(|e| e.to_string())?;
+
+    let toggle = CheckMenuItem::with_id(
+        app,
+        REMOTE_TOGGLE_ID,
+        "Enabled",
+        true,
+        cfg.enabled,
+        Option::<&str>::None,
+    )
+    .map_err(|e| e.to_string())?;
+    submenu.append(&toggle).map_err(|e| e.to_string())?;
+
+    submenu
+        .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+
+    // Mode submenu — a "Random" radio plus an optional "Room: <code>" radio
+    // when remote.json carries a saved room code. New room codes still need
+    // `eggs remote room <code>` from the CLI.
+    let mode_submenu = Submenu::new(app, "Mode", true).map_err(|e| e.to_string())?;
+    let mode_random = CheckMenuItem::with_id(
+        app,
+        REMOTE_MODE_RANDOM_ID,
+        "Random Match",
+        true,
+        cfg.enabled && cfg.mode == "random",
+        Option::<&str>::None,
+    )
+    .map_err(|e| e.to_string())?;
+    mode_submenu
+        .append(&mode_random)
+        .map_err(|e| e.to_string())?;
+    if !cfg.room.is_empty() {
+        let mode_room = CheckMenuItem::with_id(
+            app,
+            REMOTE_MODE_ROOM_ID,
+            format!("Room: {}", cfg.room),
+            true,
+            cfg.enabled && cfg.mode == "room",
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        mode_submenu.append(&mode_room).map_err(|e| e.to_string())?;
+    }
+    submenu.append(&mode_submenu).map_err(|e| e.to_string())?;
+
+    submenu
+        .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+
+    let upload = MenuItem::with_id(
+        app,
+        REMOTE_UPLOAD_ID,
+        "Re-upload Sprite",
+        true,
+        Option::<&str>::None,
+    )
+    .map_err(|e| e.to_string())?;
+    submenu.append(&upload).map_err(|e| e.to_string())?;
+
+    let leave = MenuItem::with_id(
+        app,
+        REMOTE_LEAVE_ID,
+        "Leave",
+        cfg.enabled,
+        Option::<&str>::None,
+    )
+    .map_err(|e| e.to_string())?;
+    submenu.append(&leave).map_err(|e| e.to_string())?;
+
+    submenu
+        .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+
+    // Read-only display of the current server URL — change it via
+    // `eggs remote server <url>`.
+    let server = MenuItem::with_id(
+        app,
+        "remote:server:display",
+        format!("Server: {}", cfg.server_url),
+        false,
+        Option::<&str>::None,
+    )
+    .map_err(|e| e.to_string())?;
+    submenu.append(&server).map_err(|e| e.to_string())?;
+
+    Ok(submenu)
+}
+
+/// Apply a synchronous mutation to remote.json. The remote actor's poller
+/// picks up the change on the next tick (≤ POLL_INTERVAL_MS), so the WS
+/// connect / disconnect / mode swap happens off the menu thread.
+fn update_remote<F: FnOnce(&mut remote::RemoteConfig)>(f: F) {
+    if let Err(e) = remote::update_remote_config(f) {
+        eprintln!("remote menu: failed to update remote.json: {e}");
+    }
+}
+
+/// Run the manual sprite re-upload on the tokio runtime so the menu thread
+/// stays responsive — same reason as the pet-swap path. Mirrors the CLI's
+/// `eggs remote upload`.
+fn spawn_remote_upload() {
+    tauri::async_runtime::spawn(async move {
+        let cfg = remote::read_remote_config();
+        let pet_id = match state::read_state() {
+            Ok(s) if !s.pet.is_empty() => s.pet,
+            Ok(_) => {
+                eprintln!("remote menu: no active pet to upload");
+                return;
+            }
+            Err(e) => {
+                eprintln!("remote menu: state.json read failed: {e}");
+                return;
+            }
+        };
+        let device_id = match crate::client::read_client_config() {
+            Ok(c) => c.device_id,
+            Err(e) => {
+                eprintln!("remote menu: client.json read failed: {e}");
+                return;
+            }
+        };
+        match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &pet_id).await {
+            Ok(_) => eprintln!("remote menu: re-uploaded sprite '{pet_id}'"),
+            Err(e) => eprintln!("remote menu: sprite upload failed for '{pet_id}': {e}"),
+        }
+    });
 }
