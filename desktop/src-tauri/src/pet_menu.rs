@@ -197,11 +197,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
             spawn_remote_upload();
         }
         REMOTE_LEAVE_ID => {
-            update_remote(|cfg| {
-                cfg.enabled = false;
-                cfg.mode = "random".to_string();
-                cfg.room.clear();
-            });
+            remote::request_leave_room();
         }
         _ => {}
     }
@@ -276,7 +272,7 @@ fn build_remote_submenu(app: &AppHandle) -> Result<Submenu<tauri::Wry>, String> 
     let upload = MenuItem::with_id(
         app,
         REMOTE_UPLOAD_ID,
-        "Re-upload Sprite",
+        "Sync Sprite",
         true,
         Option::<&str>::None,
     )
@@ -286,28 +282,12 @@ fn build_remote_submenu(app: &AppHandle) -> Result<Submenu<tauri::Wry>, String> 
     let leave = MenuItem::with_id(
         app,
         REMOTE_LEAVE_ID,
-        "Leave",
-        cfg.enabled,
+        "Leave Room",
+        cfg.enabled && remote::can_leave_room(),
         Option::<&str>::None,
     )
     .map_err(|e| e.to_string())?;
     submenu.append(&leave).map_err(|e| e.to_string())?;
-
-    submenu
-        .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-
-    // Read-only display of the current server URL — change it via
-    // `eggs remote server <url>`.
-    let server = MenuItem::with_id(
-        app,
-        "remote:server:display",
-        format!("Server: {}", cfg.server_url),
-        false,
-        Option::<&str>::None,
-    )
-    .map_err(|e| e.to_string())?;
-    submenu.append(&server).map_err(|e| e.to_string())?;
 
     Ok(submenu)
 }

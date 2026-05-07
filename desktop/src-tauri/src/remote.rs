@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -33,6 +33,43 @@ const RECONNECT_INITIAL_SECS: f64 = 2.0;
 const RECONNECT_MAX_SECS: f64 = 60.0;
 const RECONNECT_BACKOFF: f64 = 2.0;
 const POLL_INTERVAL_MS: u64 = 200;
+
+#[derive(Debug, Default)]
+struct RemoteRuntimeSnapshot {
+    connected: bool,
+    peer_count: usize,
+    leave_requested: bool,
+}
+
+fn runtime_snapshot() -> &'static Mutex<RemoteRuntimeSnapshot> {
+    static SNAPSHOT: OnceLock<Mutex<RemoteRuntimeSnapshot>> = OnceLock::new();
+    SNAPSHOT.get_or_init(|| Mutex::new(RemoteRuntimeSnapshot::default()))
+}
+
+fn with_runtime_snapshot<R>(f: impl FnOnce(&mut RemoteRuntimeSnapshot) -> R) -> R {
+    let mut guard = runtime_snapshot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(&mut guard)
+}
+
+pub fn request_leave_room() {
+    with_runtime_snapshot(|snap| {
+        snap.leave_requested = true;
+    });
+}
+
+pub fn can_leave_room() -> bool {
+    with_runtime_snapshot(|snap| snap.connected && snap.peer_count > 0)
+}
+
+fn take_leave_request() -> bool {
+    with_runtime_snapshot(|snap| {
+        let requested = snap.leave_requested;
+        snap.leave_requested = false;
+        requested
+    })
+}
 
 // ---------- remote.json --------------------------------------------------
 
@@ -285,10 +322,16 @@ fn build_status(
 }
 
 fn emit_status(app: &AppHandle, status: &RemoteStatus) {
+    with_runtime_snapshot(|snap| {
+        snap.connected = status.connected;
+    });
     let _ = app.emit("remote-status", status);
 }
 
 fn emit_peers(app: &AppHandle, peers: &HashMap<String, PeerSnapshot>) {
+    with_runtime_snapshot(|snap| {
+        snap.peer_count = peers.len();
+    });
     let mut list: Vec<&PeerSnapshot> = peers.values().collect();
     list.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
     let _ = app.emit("remote-peers", &list);
@@ -502,14 +545,27 @@ async fn run_actor(
             let status = build_status(&cfg, &current_sprite, false, cfg.enabled, "");
             emit_if_changed(&status, &mut last_status_payload, &app);
             if !cfg.enabled {
+                let _ = take_leave_request();
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
                 continue;
             }
         }
 
         if !cfg.enabled {
+            let _ = take_leave_request();
             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             continue;
+        }
+
+        if take_leave_request() {
+            if let Some(s) = session.take() {
+                s.close().await;
+            }
+            peers.clear();
+            emit_peers(&app, &peers);
+            peer_windows.sync(&app, &peers).await;
+            let status = build_status(&cfg, &current_sprite, false, true, "");
+            emit_if_changed(&status, &mut last_status_payload, &app);
         }
 
         // --- ensure connected ---
