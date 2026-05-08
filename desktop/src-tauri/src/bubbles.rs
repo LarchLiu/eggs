@@ -336,6 +336,30 @@ impl BubbleWindowManager {
             chat_tier_by_owner.insert(owner_key.clone(), tier);
         }
 
+        // Per-tier max chat-bubble height. Tier N's lift must clear the
+        // tallest bubble in every lower tier (otherwise a short tier-1 bubble
+        // can dip into a tall tier-0 bubble — the original bug was using
+        // each bubble's own height for the lift, which only works when all
+        // tiers happen to share the same height).
+        let mut tier_max_height: HashMap<u8, f64> = HashMap::new();
+        for entry in entries.iter().filter(|e| e.mode == BubbleMode::Chat) {
+            let k = entry.owner.to_key();
+            if let Some(&tier) = chat_tier_by_owner.get(&k) {
+                let cur = tier_max_height.entry(tier).or_insert(0.0);
+                if entry.height > *cur {
+                    *cur = entry.height;
+                }
+            }
+        }
+        let max_tier = tier_max_height.keys().copied().max().unwrap_or(0);
+        let mut chat_lift_by_tier: HashMap<u8, f64> = HashMap::new();
+        chat_lift_by_tier.insert(0, 0.0);
+        let mut acc = 0.0;
+        for t in 0..max_tier {
+            acc += tier_max_height.get(&t).copied().unwrap_or(0.0) + 6.0;
+            chat_lift_by_tier.insert(t + 1, acc);
+        }
+
         let mut per_owner_hook_offset: HashMap<String, f64> = HashMap::new();
         let mut placed: Vec<Rect> = Vec::new();
 
@@ -350,8 +374,9 @@ impl BubbleWindowManager {
                 0.0
             };
             let chat_tier = *chat_tier_by_owner.get(&owner_key).unwrap_or(&0);
+            let chat_lift = *chat_lift_by_tier.get(&chat_tier).unwrap_or(&0.0);
 
-            let preferred = preferred_position(&entry, &anchor, hook_offset, chat_tier);
+            let preferred = preferred_position(&entry, &anchor, hook_offset, chat_lift);
             let resolved = if entry.mode == BubbleMode::Chat {
                 preferred
             } else {
@@ -829,15 +854,12 @@ fn preferred_position(
     open: &OpenBubble,
     anchor: &AnchorRect,
     hook_offset: f64,
-    chat_tier: u8,
+    chat_lift: f64,
 ) -> (f64, f64) {
     let x = (anchor.x + (anchor.w - BUBBLE_WIDTH) * 0.5)
         .clamp(8.0, (anchor.screen_w - BUBBLE_WIDTH - 8.0).max(8.0));
     let y = match open.mode {
-        BubbleMode::Chat => {
-            let lift = chat_tier as f64 * (open.height + 6.0);
-            anchor.y - 8.0 - open.height - lift
-        }
+        BubbleMode::Chat => anchor.y - 8.0 - open.height - chat_lift,
         BubbleMode::Hook => anchor.y + anchor.h + 8.0 + hook_offset,
     };
     (
