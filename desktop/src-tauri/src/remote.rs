@@ -315,7 +315,6 @@ pub struct RemoteStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PeerSnapshot {
-    pub peer_id: String,
     pub device_id: String,
     pub state: String,
     /// Pet/sprite name as reported by the peer (`sprite.name` from server).
@@ -360,22 +359,17 @@ fn emit_peers(app: &AppHandle, peers: &HashMap<String, PeerSnapshot>) {
         snap.peer_count = peers.len();
     });
     let mut list: Vec<&PeerSnapshot> = peers.values().collect();
-    list.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
+    list.sort_by(|a, b| a.device_id.cmp(&b.device_id));
     let _ = app.emit("remote-peers", &list);
 }
 
 // ---------- peer state ---------------------------------------------------
 
 fn peer_from_message(msg: &Value) -> Option<PeerSnapshot> {
-    let peer_id = msg.get("peer_id")?.as_str()?.to_string();
-    if peer_id.is_empty() {
+    let device_id = msg.get("device_id")?.as_str()?.to_string();
+    if device_id.is_empty() {
         return None;
     }
-    let device_id = msg
-        .get("device_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
     let state = msg
         .get("state")
         .or_else(|| msg.get("action"))
@@ -404,7 +398,6 @@ fn peer_from_message(msg: &Value) -> Option<PeerSnapshot> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     Some(PeerSnapshot {
-        peer_id,
         device_id,
         state,
         sprite,
@@ -429,9 +422,6 @@ fn merge_peer_update(existing: Option<&PeerSnapshot>, msg: &Value) -> Option<Pee
         if next.json_url.is_empty() {
             next.json_url = prev.json_url.clone();
         }
-        if next.device_id.is_empty() {
-            next.device_id = prev.device_id.clone();
-        }
         if next.state.is_empty() {
             next.state = prev.state.clone();
         }
@@ -455,24 +445,24 @@ fn handle_incoming(app: &AppHandle, peers: &mut HashMap<String, PeerSnapshot>, m
             if let Some(items) = msg.get("peers").and_then(|v| v.as_array()) {
                 for item in items {
                     if let Some(p) = peer_from_message(item) {
-                        peers.insert(p.peer_id.clone(), p);
+                        peers.insert(p.device_id.clone(), p);
                     }
                 }
             }
             changed = true;
         }
         "peer_left" => {
-            if let Some(id) = msg.get("peer_id").and_then(|v| v.as_str()) {
+            if let Some(id) = msg.get("device_id").and_then(|v| v.as_str()) {
                 if peers.remove(id).is_some() {
                     changed = true;
                 }
             }
         }
         "peer_joined" | "peer_state" | "peer_action" | "peer_sprite_changed" => {
-            if let Some(id) = msg.get("peer_id").and_then(|v| v.as_str()) {
+            if let Some(id) = msg.get("device_id").and_then(|v| v.as_str()) {
                 let updated = merge_peer_update(peers.get(id), &msg);
                 if let Some(p) = updated {
-                    peers.insert(p.peer_id.clone(), p);
+                    peers.insert(p.device_id.clone(), p);
                     changed = true;
                 }
             }
@@ -500,22 +490,22 @@ fn handle_peer_chat(cfg: &RemoteConfig, msg: &Value) {
     if msg_type != "peer_chat" {
         return;
     }
-    let peer_id = msg.get("peer_id").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
-    if peer_id.is_empty() || text.is_empty() {
-        return;
-    }
     let device_id = msg
         .get("device_id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let text = msg.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if device_id.is_empty() || text.is_empty() {
+        return;
+    }
     let room_code = room_code_for_history(cfg);
 
     let event = match bubbles::queue_peer_user_message(
-        peer_id,
+        &device_id,
         text,
         room_code.clone(),
-        device_id.clone(),
     ) {
         Ok(v) => v,
         Err(e) => {
@@ -528,10 +518,10 @@ fn handle_peer_chat(cfg: &RemoteConfig, msg: &Value) {
         let history = bubbles::ChatHistoryEntry {
             id: evt.id,
             source: bubbles::BubbleSource::PeerUserInput,
-            owner: evt.owner,
+            owner: bubbles::HistoryOwner::from(&evt.owner),
             text: evt.text,
             created_ms: evt.created_ms,
-            device_id,
+            device_id: Some(device_id),
         };
         if let Err(e) = bubbles::append_room_history(&room, history) {
             eprintln!("remote peer chat history append failed: {e}");
@@ -881,8 +871,8 @@ async fn run_actor(
         }
         if peers_changed {
             peer_windows.sync(&app, &peers).await;
-            let active_peer_ids: HashSet<String> = peers.keys().cloned().collect();
-            bubble_windows.sync_peer_owners(&app, &active_peer_ids).await;
+            let active_device_ids: HashSet<String> = peers.keys().cloned().collect();
+            bubble_windows.sync_peer_owners(&app, &active_device_ids).await;
         }
 
         if let Some(reason) = disconnect_reason {

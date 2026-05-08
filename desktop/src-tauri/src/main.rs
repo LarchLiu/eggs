@@ -109,12 +109,12 @@ fn show_context_menu(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Res
 #[tauri::command]
 async fn get_peer_init(
     state: tauri::State<'_, SharedPeerWindowManager>,
-    peer_id: String,
+    device_id: String,
 ) -> Result<PeerInit, String> {
     state
-        .get_init(&peer_id)
+        .get_init(&device_id)
         .await
-        .ok_or_else(|| format!("unknown peer: {peer_id}"))
+        .ok_or_else(|| format!("unknown peer: {device_id}"))
 }
 
 #[tauri::command]

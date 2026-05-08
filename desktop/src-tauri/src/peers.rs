@@ -3,7 +3,7 @@
 // Mirrors egg_desktop.py's per-peer Tk Toplevel: each remote peer gets its own
 // transparent, click-through, always-on-top WebviewWindow that animates the
 // peer's atlas. The window URL is the same `peer.html`; the page identifies
-// itself by its window label (`peer-<peer_id>`) and asks Rust for its initial
+// itself by its window label (`peer-<device_id>`) and asks Rust for its initial
 // state via `get_peer_init`. Subsequent state updates flow over the existing
 // `remote-peers` event the actor already emits.
 //
@@ -48,7 +48,7 @@ struct OpenPeer {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PeerInit {
-    pub peer_id: String,
+    pub device_id: String,
     pub sprite: String,
     pub state: String,
     /// Absolute filesystem paths; the webview turns these into asset:// URLs
@@ -63,7 +63,7 @@ pub struct PeerInit {
 
 #[derive(Debug, Clone, Serialize)]
 struct PeerStateEvent {
-    pub peer_id: String,
+    pub device_id: String,
     pub state: String,
 }
 
@@ -82,11 +82,11 @@ impl PeerWindowManager {
         }
     }
 
-    pub async fn get_init(&self, peer_id: &str) -> Option<PeerInit> {
+    pub async fn get_init(&self, device_id: &str) -> Option<PeerInit> {
         let map = self.open.lock().await;
-        let entry = map.get(peer_id)?;
+        let entry = map.get(device_id)?;
         Some(PeerInit {
-            peer_id: peer_id.to_string(),
+            device_id: device_id.to_string(),
             sprite: entry.sprite_name.clone(),
             state: entry.state.clone(),
             sprite_path_abs: entry.sprite_path.to_string_lossy().to_string(),
@@ -115,7 +115,7 @@ impl PeerWindowManager {
             ids.sort();
             ids.iter()
                 .enumerate()
-                .map(|(slot, peer_id)| (peer_window_label(peer_id), slot))
+                .map(|(slot, device_id)| (peer_window_label(device_id), slot))
                 .collect()
         };
         for (label, slot) in entries {
@@ -140,7 +140,7 @@ impl PeerWindowManager {
             ids.sort();
             ids.iter()
                 .enumerate()
-                .map(|(slot, peer_id)| (peer_window_label(peer_id), slot))
+                .map(|(slot, device_id)| (peer_window_label(device_id), slot))
                 .collect()
         };
         for (label, slot) in entries {
@@ -163,11 +163,11 @@ impl PeerWindowManager {
             let map = self.open.lock().await;
             let live: HashSet<&String> = peers.keys().collect();
             let open: HashSet<&String> = map.keys().collect();
-            for peer_id in open.difference(&live) {
-                to_close.push((*peer_id).clone());
+            for device_id in open.difference(&live) {
+                to_close.push((*device_id).clone());
             }
-            for (peer_id, snap) in peers {
-                let Some(entry) = map.get(peer_id) else {
+            for (device_id, snap) in peers {
+                let Some(entry) = map.get(device_id) else {
                     if !snap.sprite_url.is_empty() && !snap.json_url.is_empty() {
                         to_open.push(snap.clone());
                     }
@@ -181,7 +181,7 @@ impl PeerWindowManager {
                 if asset_changed && !snap.sprite_url.is_empty() && !snap.json_url.is_empty() {
                     to_replace.push(snap.clone());
                 } else if snap.state != entry.state {
-                    state_changes.push((peer_id.clone(), snap.state.clone()));
+                    state_changes.push((device_id.clone(), snap.state.clone()));
                 }
             }
         }
@@ -189,8 +189,8 @@ impl PeerWindowManager {
         let topology_changed =
             !to_close.is_empty() || !to_open.is_empty() || !to_replace.is_empty();
 
-        for peer_id in to_close {
-            self.close_window(app, &peer_id).await;
+        for device_id in to_close {
+            self.close_window(app, &device_id).await;
         }
         for snap in to_replace {
             // Download the new atlas BEFORE touching the existing window so
@@ -210,7 +210,7 @@ impl PeerWindowManager {
                 Err(e) => {
                     eprintln!(
                         "peer asset download failed for {} (keeping previous sprite): {}",
-                        snap.peer_id, e
+                        snap.device_id, e
                     );
                     continue;
                 }
@@ -219,24 +219,24 @@ impl PeerWindowManager {
             // already-cached assets. Atlas swap mid-animation is rare enough
             // (peer changes pet) that a tiny close/open flash is acceptable;
             // a true in-place atlas swap would need a peer.js protocol.
-            self.close_window(app, &snap.peer_id).await;
+            self.close_window(app, &snap.device_id).await;
             self.open_window_with_cached(app, snap, cached).await;
         }
         for snap in to_open {
             self.open_window(app, snap).await;
         }
-        for (peer_id, state) in state_changes {
+        for (device_id, state) in state_changes {
             {
                 let mut map = self.open.lock().await;
-                if let Some(entry) = map.get_mut(&peer_id) {
+                if let Some(entry) = map.get_mut(&device_id) {
                     entry.state = state.clone();
                 }
             }
-            let label = peer_window_label(&peer_id);
+            let label = peer_window_label(&device_id);
             let _ = app.emit_to(
                 tauri::EventTarget::webview_window(label),
                 "peer-state",
-                PeerStateEvent { peer_id, state },
+                PeerStateEvent { device_id, state },
             );
         }
 
@@ -259,7 +259,7 @@ impl PeerWindowManager {
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("peer asset download failed for {}: {}", snap.peer_id, e);
+                eprintln!("peer asset download failed for {}: {}", snap.device_id, e);
                 return;
             }
         };
@@ -282,7 +282,7 @@ impl PeerWindowManager {
         let slot = {
             let mut map = self.open.lock().await;
             map.insert(
-                snap.peer_id.clone(),
+                snap.device_id.clone(),
                 OpenPeer {
                     asset_id: cached.asset_id.clone(),
                     sprite_name: snap.sprite.clone(),
@@ -296,24 +296,24 @@ impl PeerWindowManager {
                     },
                 },
             );
-            slot_for(&map, &snap.peer_id)
+            slot_for(&map, &snap.device_id)
         };
 
         let (x, y) = position_for_peer(app, scale_millis, slot);
-        if let Err(e) = build_peer_window(app, &snap.peer_id, &cached, scale_millis, x, y).await {
-            eprintln!("could not open peer window for {}: {}", snap.peer_id, e);
+        if let Err(e) = build_peer_window(app, &snap.device_id, &cached, scale_millis, x, y).await {
+            eprintln!("could not open peer window for {}: {}", snap.device_id, e);
             // Roll back the map entry on failure.
             let mut map = self.open.lock().await;
-            map.remove(&snap.peer_id);
+            map.remove(&snap.device_id);
         }
     }
 
-    async fn close_window(&self, app: &AppHandle, peer_id: &str) {
+    async fn close_window(&self, app: &AppHandle, device_id: &str) {
         {
             let mut map = self.open.lock().await;
-            map.remove(peer_id);
+            map.remove(device_id);
         }
-        let label = peer_window_label(peer_id);
+        let label = peer_window_label(device_id);
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.close();
         }
@@ -334,8 +334,8 @@ impl PeerWindowManager {
     }
 }
 
-pub fn peer_window_label(peer_id: &str) -> String {
-    let safe: String = peer_id
+pub fn peer_window_label(device_id: &str) -> String {
+    let safe: String = device_id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-' | '_'))
         .collect();
@@ -344,20 +344,20 @@ pub fn peer_window_label(peer_id: &str) -> String {
 
 async fn build_peer_window(
     app: &AppHandle,
-    peer_id: &str,
+    device_id: &str,
     _cached: &CachedAssets,
     scale_millis: u16,
     x: f64,
     y: f64,
 ) -> tauri::Result<()> {
-    let label = peer_window_label(peer_id);
+    let label = peer_window_label(device_id);
     if app.get_webview_window(&label).is_some() {
         return Ok(());
     }
     let scale = scale_millis as f64 / 1000.0;
     let width = PEER_WIDTH * scale;
     let height = PEER_HEIGHT * scale;
-    let url = format!("peer.html#{}", urlencoding(peer_id));
+    let url = format!("peer.html#{}", urlencoding(device_id));
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("Eggs Peer")
         .inner_size(width, height)
@@ -378,8 +378,8 @@ async fn build_peer_window(
 
 /// Always place peers immediately to the right of the local pet window
 /// with bottoms aligned. For multiple peers, sort lexicographically by
-/// `peer_id` and stack them right-ward (slot 0 = closest to local pet,
-/// slot 1 = one cell further right, ...). The same `peer_id` always lands
+/// `device_id` and stack them right-ward (slot 0 = closest to local pet,
+/// slot 1 = one cell further right, ...). The same `device_id` always lands
 /// in the same slot relative to its siblings, so reconnects don't
 /// re-shuffle existing peers.
 fn position_for_peer(app: &AppHandle, scale_millis: u16, slot_index: usize) -> (f64, f64) {
@@ -408,14 +408,14 @@ fn position_for_peer(app: &AppHandle, scale_millis: u16, slot_index: usize) -> (
     (x, y)
 }
 
-/// Slot index of `peer_id` in the lexicographic ordering of currently
+/// Slot index of `device_id` in the lexicographic ordering of currently
 /// open peers (caller holds the `open` lock). Used to keep the same
 /// physical position stable across reconnects: a peer's position only
 /// shifts if a peer with a smaller id joins or leaves.
-fn slot_for(map: &HashMap<String, OpenPeer>, peer_id: &str) -> usize {
+fn slot_for(map: &HashMap<String, OpenPeer>, device_id: &str) -> usize {
     let mut ids: Vec<&String> = map.keys().collect();
     ids.sort();
-    ids.iter().position(|id| **id == peer_id).unwrap_or(0)
+    ids.iter().position(|id| **id == device_id).unwrap_or(0)
 }
 
 fn primary_monitor_size(app: &AppHandle, scale_factor: f64) -> Option<(f64, f64)> {

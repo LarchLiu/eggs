@@ -1,7 +1,7 @@
 // Eggs peer overlay — frontend for one remote peer.
 //
 // One transparent always-on-top window per remote peer; this script runs in
-// each. It identifies itself by the URL fragment (#<peer_id>) that the Rust
+// each. It identifies itself by the URL fragment (#<device_id>) that the Rust
 // peer manager assigns at window creation time, asks Rust for the cached
 // sprite paths via the `get_peer_init` command, then animates the same Codex
 // atlas LAYOUT as the local pet.
@@ -83,7 +83,7 @@
     }
   }
 
-  function readPeerId() {
+  function readDeviceId() {
     const raw = window.location.hash.replace(/^#/, "");
     try {
       return decodeURIComponent(raw);
@@ -93,9 +93,9 @@
   }
 
   async function main() {
-    const peerId = readPeerId();
-    if (!peerId) {
-      console.error("peer.html opened without a peer_id fragment");
+    const deviceId = readDeviceId();
+    if (!deviceId) {
+      console.error("peer.html opened without a device_id fragment");
       return;
     }
 
@@ -104,9 +104,9 @@
 
     let init;
     try {
-      init = await invoke("get_peer_init", { peerId });
+      init = await invoke("get_peer_init", { deviceId });
     } catch (e) {
-      console.error(`get_peer_init(${peerId}) failed:`, e);
+      console.error(`get_peer_init(${deviceId}) failed:`, e);
       return;
     }
     if (typeof init.scale_millis === "number") {
@@ -132,7 +132,7 @@
     // our own peer and update animation state.
     await listen("remote-peers", (evt) => {
       const list = evt.payload || [];
-      const me = list.find((p) => p && p.peer_id === peerId);
+      const me = list.find((p) => p && p.device_id === deviceId);
       if (!me) return;
       if (me.state) pet.setState(me.state);
     });
@@ -141,7 +141,7 @@
     // than re-broadcasting the whole peer list when only a state changed.
     await listen("peer-state", (evt) => {
       const payload = evt.payload || {};
-      if (payload.peer_id !== peerId) return;
+      if (payload.device_id !== deviceId) return;
       if (payload.state) pet.setState(payload.state);
     });
   }

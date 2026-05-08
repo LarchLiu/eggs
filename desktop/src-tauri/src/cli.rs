@@ -217,7 +217,7 @@ fn queue_user_message(text: &str) -> Result<(), i32> {
         let history = crate::bubbles::ChatHistoryEntry {
             id: evt.id.clone(),
             source: crate::bubbles::BubbleSource::UserInput,
-            owner: crate::bubbles::BubbleOwner::Local,
+            owner: crate::bubbles::HistoryOwner::Local,
             text: evt.text.clone(),
             created_ms: evt.created_ms,
             device_id: None,

@@ -114,7 +114,7 @@ Broadcast messages:
 
 Newly joined clients first receive a `room_snapshot` containing the currently online peers in that room, including each peer's current sprite metadata plus latest known state. Incremental updates then arrive as `peer_joined`, `peer_left`, `peer_state`, `peer_action`, and `peer_sprite_changed`.
 
-Each peer broadcast includes `peer_id`, `device_id`, and an embedded `sprite` object with that peer's sprite metadata and asset URLs. Room interaction does not depend on `/api/v1/sprites/{sprite_id}` lookups, and peer asset downloads use the broadcast `content_id`-backed asset URLs directly.
+Each peer broadcast includes `device_id` and an embedded `sprite` object with that peer's sprite metadata and asset URLs. Room interaction does not depend on `/api/v1/sprites/{sprite_id}` lookups, and peer asset downloads use the broadcast `content_id`-backed asset URLs directly.
 
 The server is owner-authoritative: it stores metadata and forwards room messages, but it does not simulate movement or gameplay.
 

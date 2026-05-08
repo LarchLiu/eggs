@@ -809,7 +809,6 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		client.applyIncomingMessage(t, msg)
 		msg["type"] = outType
-		msg["peer_id"] = client.id
 		msg["device_id"] = client.deviceID
 		client.appendPresence(msg)
 		sendDeliveries(s.hub.broadcast(client, msg))
@@ -915,7 +914,6 @@ func peerMessage(messageType string, client *wsClient) map[string]any {
 	sprite, state := client.presenceSnapshot()
 	msg := map[string]any{
 		"type":      messageType,
-		"peer_id":   client.id,
 		"device_id": client.deviceID,
 		"sprite":    sprite,
 	}
@@ -1035,7 +1033,7 @@ func (h *hub) leave(c *wsClient) []delivery {
 	for _, peer := range others {
 		deliveries = append(deliveries, delivery{
 			target: peer,
-			msg:    map[string]any{"type": "peer_left", "peer_id": c.id},
+			msg:    map[string]any{"type": "peer_left", "device_id": c.deviceID},
 		})
 	}
 	if room.empty() {

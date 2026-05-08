@@ -27,11 +27,7 @@ const CHAT_WINDOW_PREFIX: &str = "chat-";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BubbleOwner {
     Local,
-    Peer {
-        peer_id: String,
-        #[serde(default)]
-        device_id: Option<String>,
-    },
+    Peer { device_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -104,11 +100,30 @@ pub struct ChatOutboxFile {
 pub struct ChatHistoryEntry {
     pub id: String,
     pub source: BubbleSource,
-    pub owner: BubbleOwner,
+    pub owner: HistoryOwner,
     pub text: String,
     pub created_ms: u64,
     #[serde(default)]
     pub device_id: Option<String>,
+}
+
+/// Owner kind for archived chat history. The partner's identity is the
+/// top-level `device_id`; this enum only records whether a line was sent
+/// locally or by a peer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HistoryOwner {
+    Local,
+    Peer,
+}
+
+impl From<&BubbleOwner> for HistoryOwner {
+    fn from(owner: &BubbleOwner) -> Self {
+        match owner {
+            BubbleOwner::Local => HistoryOwner::Local,
+            BubbleOwner::Peer { .. } => HistoryOwner::Peer,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -377,15 +392,15 @@ impl BubbleWindowManager {
     pub async fn sync_peer_owners(
         &self,
         app: &AppHandle,
-        active_peer_ids: &std::collections::HashSet<String>,
+        active_device_ids: &std::collections::HashSet<String>,
     ) {
         let stale_ids: Vec<String> = {
             let mut store = self.store.lock().await;
             let mut removed: Vec<String> = Vec::new();
             store.open.retain(|id, open| match &open.owner {
                 BubbleOwner::Local => true,
-                BubbleOwner::Peer { peer_id, .. } => {
-                    let keep = active_peer_ids.contains(peer_id);
+                BubbleOwner::Peer { device_id } => {
+                    let keep = active_device_ids.contains(device_id);
                     if !keep {
                         removed.push(id.clone());
                     }
@@ -534,22 +549,8 @@ impl BubbleOwner {
     fn to_key(&self) -> String {
         match self {
             BubbleOwner::Local => "local".to_string(),
-            BubbleOwner::Peer { peer_id, device_id } => {
-                format!("peer:{}", stable_peer_key(peer_id, device_id.as_deref()))
-            }
+            BubbleOwner::Peer { device_id } => format!("peer:{}", sanitize_filename(device_id)),
         }
-    }
-}
-
-/// Pick the most stable identifier we have for this partner. `device_id` is
-/// per-device and persists across reconnects; `peer_id` is per WebSocket
-/// connection and rotates each time. We prefer device_id so the chat bucket
-/// and bubble window survive disconnect/reconnect cycles.
-fn stable_peer_key(peer_id: &str, device_id: Option<&str>) -> String {
-    let dev = device_id.map(str::trim).filter(|s| !s.is_empty());
-    match dev {
-        Some(d) => sanitize_filename(d),
-        None => sanitize_filename(peer_id),
     }
 }
 
@@ -590,13 +591,12 @@ pub fn queue_local_user_message(text: &str, room_code: Option<String>) -> io::Re
 }
 
 pub fn queue_peer_user_message(
-    peer_id: &str,
+    device_id: &str,
     text: &str,
     room_code: Option<String>,
-    device_id: Option<String>,
 ) -> io::Result<Option<BubbleEvent>> {
-    let peer = sanitize_peer_id(peer_id);
-    if peer.is_empty() {
+    let dev = sanitize_device_id(device_id);
+    if dev.is_empty() {
         return Ok(None);
     }
     let Some(clean) = normalize_text(text) else {
@@ -605,15 +605,14 @@ pub fn queue_peer_user_message(
     let event = BubbleEvent {
         id: make_id("peer"),
         owner: BubbleOwner::Peer {
-            peer_id: peer,
-            device_id: device_id.clone(),
+            device_id: dev.clone(),
         },
         source: BubbleSource::PeerUserInput,
         text: clean,
         ttl_ms: DEFAULT_USER_TTL_MS,
         created_ms: now_ms(),
         room_code,
-        device_id,
+        device_id: Some(dev),
     };
     enqueue_bubble(event.clone())?;
     Ok(Some(event))
@@ -772,9 +771,9 @@ fn bubble_window_label(bubble_id: &str) -> String {
 fn chat_window_id(owner: &BubbleOwner) -> String {
     match owner {
         BubbleOwner::Local => format!("{CHAT_WINDOW_PREFIX}local"),
-        BubbleOwner::Peer { peer_id, device_id } => format!(
+        BubbleOwner::Peer { device_id } => format!(
             "{CHAT_WINDOW_PREFIX}peer-{}",
-            stable_peer_key(peer_id, device_id.as_deref())
+            sanitize_filename(device_id)
         ),
     }
 }
@@ -809,7 +808,7 @@ impl Rect {
 fn anchor_rect(app: &AppHandle, owner: &BubbleOwner) -> Option<AnchorRect> {
     let anchor_label = match owner {
         BubbleOwner::Local => "pet".to_string(),
-        BubbleOwner::Peer { peer_id, .. } => crate::peers::peer_window_label(peer_id),
+        BubbleOwner::Peer { device_id } => crate::peers::peer_window_label(device_id),
     };
     let anchor = app.get_webview_window(&anchor_label)?;
     let scale_factor = anchor.scale_factor().ok().unwrap_or(1.0);
@@ -962,7 +961,7 @@ fn sanitize_filename(input: &str) -> String {
     }
 }
 
-fn sanitize_peer_id(input: &str) -> String {
+fn sanitize_device_id(input: &str) -> String {
     input
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-' | '_'))
