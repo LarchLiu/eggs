@@ -4,7 +4,8 @@
   "description": "Capabilities for the pet overlay window and per-peer overlays",
   "windows": [
     "pet",
-    "peer-*"
+    "peer-*",
+    "bubble-*"
   ],
   "permissions": [
     "core:default",

@@ -27,7 +27,11 @@ const CHAT_WINDOW_PREFIX: &str = "chat-";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BubbleOwner {
     Local,
-    Peer { peer_id: String },
+    Peer {
+        peer_id: String,
+        #[serde(default)]
+        device_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -380,7 +384,7 @@ impl BubbleWindowManager {
             let mut removed: Vec<String> = Vec::new();
             store.open.retain(|id, open| match &open.owner {
                 BubbleOwner::Local => true,
-                BubbleOwner::Peer { peer_id } => {
+                BubbleOwner::Peer { peer_id, .. } => {
                     let keep = active_peer_ids.contains(peer_id);
                     if !keep {
                         removed.push(id.clone());
@@ -388,15 +392,9 @@ impl BubbleWindowManager {
                     keep
                 }
             });
-            store.chat.retain(|owner_key, _| {
-                if owner_key == "local" {
-                    return true;
-                }
-                owner_key
-                    .strip_prefix("peer:")
-                    .map(|peer_id| active_peer_ids.contains(peer_id))
-                    .unwrap_or(true)
-            });
+            // Chat buckets are keyed by device_id (the stable partner identity),
+            // so we deliberately keep them across peer disconnect/reconnect:
+            // history must persist when the same partner rejoins.
             removed
         };
 
@@ -469,6 +467,7 @@ impl BubbleWindowManager {
             let mut need_open = false;
             let mut need_emit = false;
             if let Some(open) = store.open.get_mut(&id) {
+                open.owner = event.owner.clone();
                 open.source = event.source;
                 open.text = latest;
                 open.messages = messages;
@@ -535,8 +534,22 @@ impl BubbleOwner {
     fn to_key(&self) -> String {
         match self {
             BubbleOwner::Local => "local".to_string(),
-            BubbleOwner::Peer { peer_id } => format!("peer:{peer_id}"),
+            BubbleOwner::Peer { peer_id, device_id } => {
+                format!("peer:{}", stable_peer_key(peer_id, device_id.as_deref()))
+            }
         }
+    }
+}
+
+/// Pick the most stable identifier we have for this partner. `device_id` is
+/// per-device and persists across reconnects; `peer_id` is per WebSocket
+/// connection and rotates each time. We prefer device_id so the chat bucket
+/// and bubble window survive disconnect/reconnect cycles.
+fn stable_peer_key(peer_id: &str, device_id: Option<&str>) -> String {
+    let dev = device_id.map(str::trim).filter(|s| !s.is_empty());
+    match dev {
+        Some(d) => sanitize_filename(d),
+        None => sanitize_filename(peer_id),
     }
 }
 
@@ -591,7 +604,10 @@ pub fn queue_peer_user_message(
     };
     let event = BubbleEvent {
         id: make_id("peer"),
-        owner: BubbleOwner::Peer { peer_id: peer },
+        owner: BubbleOwner::Peer {
+            peer_id: peer,
+            device_id: device_id.clone(),
+        },
         source: BubbleSource::PeerUserInput,
         text: clean,
         ttl_ms: DEFAULT_USER_TTL_MS,
@@ -756,7 +772,10 @@ fn bubble_window_label(bubble_id: &str) -> String {
 fn chat_window_id(owner: &BubbleOwner) -> String {
     match owner {
         BubbleOwner::Local => format!("{CHAT_WINDOW_PREFIX}local"),
-        BubbleOwner::Peer { peer_id } => format!("{CHAT_WINDOW_PREFIX}peer-{}", sanitize_filename(peer_id)),
+        BubbleOwner::Peer { peer_id, device_id } => format!(
+            "{CHAT_WINDOW_PREFIX}peer-{}",
+            stable_peer_key(peer_id, device_id.as_deref())
+        ),
     }
 }
 
@@ -790,7 +809,7 @@ impl Rect {
 fn anchor_rect(app: &AppHandle, owner: &BubbleOwner) -> Option<AnchorRect> {
     let anchor_label = match owner {
         BubbleOwner::Local => "pet".to_string(),
-        BubbleOwner::Peer { peer_id } => crate::peers::peer_window_label(peer_id),
+        BubbleOwner::Peer { peer_id, .. } => crate::peers::peer_window_label(peer_id),
     };
     let anchor = app.get_webview_window(&anchor_label)?;
     let scale_factor = anchor.scale_factor().ok().unwrap_or(1.0);
