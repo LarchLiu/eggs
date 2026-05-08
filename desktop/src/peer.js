@@ -29,7 +29,6 @@
     { state: "running",       row: 7, frames: 6, durations: [120, 120, 120, 120, 120, 220] },
     { state: "review",        row: 8, frames: 6, durations: [150, 150, 150, 150, 150, 280] },
   ];
-  const HATCH_FIXED_STATES = ["unborn", "ready", "hatching", "hatched", "walk"];
 
   function normalizeAnimDef(raw) {
     if (!raw || typeof raw !== "object") return null;
@@ -62,20 +61,37 @@
       }
     };
     append(manifest && manifest.custom);
-    const hatch = manifest && Array.isArray(manifest.hatch) ? manifest.hatch : [];
-    const hasHatch = hatch.length > 0;
-    const hatchIsComplete = hasHatch
-      && hatch.length === HATCH_FIXED_STATES.length
-      && hatch.every((raw, idx) => {
-        const state = raw && typeof raw.state === "string" ? raw.state.trim() : "";
-        return state === HATCH_FIXED_STATES[idx];
-      });
-    if (hatchIsComplete) {
-      append(hatch);
-    }
+    append(manifest && manifest.hatch);
     const layout = [...BUILTIN_LAYOUT, ...extra];
     const byState = Object.fromEntries(layout.map((entry) => [entry.state, entry]));
-    return { layout, byState };
+    const hatchOrder = [];
+    const hatchSeen = new Set();
+    if (manifest && Array.isArray(manifest.hatch)) {
+      for (const raw of manifest.hatch) {
+        const def = normalizeAnimDef(raw);
+        if (!def) continue;
+        if (hatchSeen.has(def.state)) continue;
+        hatchSeen.add(def.state);
+        hatchOrder.push(def.state);
+      }
+    }
+    return { layout, byState, hatchOrder };
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function hatchTotalDuration(row) {
+    if (!row) return 0;
+    const count = Math.max(0, Number(row.frames) || 0);
+    if (count <= 0) return 0;
+    let total = 0;
+    for (let i = 0; i < count; i += 1) {
+      const n = Number(row.durations && row.durations[i]);
+      total += Number.isFinite(n) && n > 0 ? n : 150;
+    }
+    return total;
   }
 
   class PetView {
@@ -159,6 +175,8 @@
 
     const el = document.getElementById("pet");
     const pet = new PetView(el, 1.0);
+    let currentHatchOrder = [];
+    let hatchRunToken = 0;
 
     let init;
     try {
@@ -179,8 +197,9 @@
         const resp = await fetch(manifestUrl);
         if (resp.ok) {
           const manifest = await resp.json();
-          const { layout, byState } = buildLayout(manifest);
+          const { layout, byState, hatchOrder } = buildLayout(manifest);
           pet.setLayout(layout, byState);
+          currentHatchOrder = hatchOrder;
         }
       } catch (e) {
         console.warn("peer manifest parse failed; using builtin layout", e);
@@ -214,6 +233,35 @@
       const payload = evt.payload || {};
       if (payload.device_id !== deviceId) return;
       if (payload.state) pet.setState(payload.state);
+    });
+
+    await listen("remote-peer-hatch", async (evt) => {
+      const payload = evt && evt.payload ? evt.payload : {};
+      if (payload.device_id !== deviceId) return;
+      if (!Array.isArray(currentHatchOrder) || currentHatchOrder.length === 0) return;
+      hatchRunToken += 1;
+      const token = hatchRunToken;
+      for (const stateName of currentHatchOrder) {
+        if (token !== hatchRunToken) return;
+        const row = pet.byState[stateName];
+        if (!row) continue;
+        pet.setState(stateName);
+        const total = hatchTotalDuration(row);
+        if (total > 0) {
+          await sleep(total);
+        } else {
+          await sleep(120);
+        }
+      }
+      if (token !== hatchRunToken) return;
+      const fallbackState = typeof payload.fallback_state === "string" && payload.fallback_state.trim()
+        ? payload.fallback_state.trim()
+        : "idle";
+      if (pet.byState[fallbackState]) {
+        pet.setState(fallbackState);
+      } else if (pet.byState.idle) {
+        pet.setState("idle");
+      }
     });
   }
 

@@ -62,6 +62,23 @@ fn write_state(state: state::RuntimeState) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn read_hatched_pets() -> Result<Vec<String>, String> {
+    state::read_hatch_state()
+        .map(|s| s.completed)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn mark_pet_hatched(pet_id: String) -> Result<(), String> {
+    state::mark_pet_hatched(&pet_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn queue_hatch_finish_state(state: String) {
+    remote::queue_hatch_finish_state(&state);
+}
+
+#[tauri::command]
 fn set_scale(window: tauri::WebviewWindow, scale_millis: u16) -> Result<(), String> {
     let clamped = match scale_millis {
         400 | 500 | 600 | 800 | 1000 => scale_millis,
@@ -265,6 +282,9 @@ fn main() {
             load_pet,
             read_state,
             write_state,
+            read_hatched_pets,
+            mark_pet_hatched,
+            queue_hatch_finish_state,
             set_scale,
             read_remote_config,
             write_remote_config,

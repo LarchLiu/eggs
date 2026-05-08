@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RuntimeState {
@@ -25,6 +26,12 @@ pub struct RuntimeState {
     pub window_x: Option<i32>,
     #[serde(default)]
     pub window_y: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HatchState {
+    #[serde(default)]
+    pub completed: Vec<String>,
 }
 
 fn default_state_name() -> String {
@@ -47,6 +54,10 @@ pub fn app_dir() -> PathBuf {
 
 pub fn state_path() -> PathBuf {
     app_dir().join("state.json")
+}
+
+pub fn hatch_state_path() -> PathBuf {
+    app_dir().join("hatch-state.json")
 }
 
 pub fn read_state() -> io::Result<RuntimeState> {
@@ -79,6 +90,42 @@ pub fn write_state(s: &RuntimeState) -> io::Result<()> {
     fs::create_dir_all(&dir)?;
     let json = serde_json::to_string_pretty(s)?;
     fs::write(state_path(), json)
+}
+
+pub fn read_hatch_state() -> io::Result<HatchState> {
+    let path = hatch_state_path();
+    if !path.exists() {
+        return Ok(HatchState::default());
+    }
+    let text = fs::read_to_string(path)?;
+    let mut state: HatchState = serde_json::from_str(&text)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    state.completed = state
+        .completed
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+    Ok(state)
+}
+
+pub fn mark_pet_hatched(pet_id: &str) -> io::Result<()> {
+    let pet_id = pet_id.trim();
+    if pet_id.is_empty() {
+        return Ok(());
+    }
+    let mut state = read_hatch_state().unwrap_or_default();
+    let mut set: BTreeSet<String> = state.completed.into_iter().collect();
+    set.insert(pet_id.to_string());
+    state.completed = set.into_iter().collect();
+    write_hatch_state(&state)
+}
+
+fn write_hatch_state(state: &HatchState) -> io::Result<()> {
+    let dir = app_dir();
+    fs::create_dir_all(&dir)?;
+    let json = serde_json::to_string_pretty(state)?;
+    fs::write(hatch_state_path(), format!("{json}\n"))
 }
 
 pub fn set_state(name: &str) -> io::Result<()> {

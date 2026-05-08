@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, LogicalSize, Manager, Size, WebviewWindow};
+use tauri::{AppHandle, Emitter, EventTarget, LogicalSize, Manager, Size, WebviewWindow};
 
 use crate::pet;
 use crate::remote;
@@ -31,11 +32,18 @@ pub const PET_STATES: [&str; 9] = [
     "running",
     "review",
 ];
+const HATCH_MENU_STATE: &str = "hatch";
 
 pub const SCALE_PRESETS: [u16; 5] = [400, 500, 600, 800, 1000];
 
 pub struct PetMenuStore {
     active_menu: Mutex<Option<Menu<tauri::Wry>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HatchPlayEvent {
+    fallback_state: String,
+    sync_remote: bool,
 }
 
 impl PetMenuStore {
@@ -81,10 +89,25 @@ fn custom_menu_states_for_pet(pet_id: &str) -> Vec<String> {
     out
 }
 
+fn has_hatch_states_for_pet(pet_id: &str) -> bool {
+    if pet_id.trim().is_empty() {
+        return false;
+    }
+    let manifest = match pet::load_pet(pet_id) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    manifest
+        .hatch
+        .iter()
+        .any(|def| !def.state.trim().is_empty())
+}
+
 pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
     let current = state::read_state().map_err(|e| e.to_string())?;
     let pets = pet::list_installed_pets().map_err(|e| e.to_string())?;
     let custom_states = custom_menu_states_for_pet(&current.pet);
+    let has_hatch = has_hatch_states_for_pet(&current.pet);
 
     let pet_submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
     let (local_pets, remote_pets): (Vec<_>, Vec<_>) =
@@ -144,6 +167,21 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     }
 
     let state_submenu = Submenu::new(app, "State", true).map_err(|e| e.to_string())?;
+    if has_hatch {
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("{STATE_PREFIX}{HATCH_MENU_STATE}"),
+            HATCH_MENU_STATE,
+            true,
+            current.state == HATCH_MENU_STATE,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        state_submenu.append(&item).map_err(|e| e.to_string())?;
+        state_submenu
+            .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    }
     for state_name in PET_STATES {
         let item = CheckMenuItem::with_id(
             app,
@@ -165,7 +203,7 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
             state_name == current.state,
             Option::<&str>::None,
         )
-        .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
         state_submenu.append(&item).map_err(|e| e.to_string())?;
     }
 
@@ -227,6 +265,24 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
     }
 
     if let Some(state_name) = id.strip_prefix(STATE_PREFIX) {
+        if state_name == HATCH_MENU_STATE {
+            let fallback_state = state::read_state()
+                .map(|s| s.state)
+                .unwrap_or_else(|_| "idle".to_string());
+            let should_sync_remote = remote::read_remote_config().enabled && remote::can_leave_room();
+            let _ = app.emit_to(
+                EventTarget::webview_window("pet".to_string()),
+                "play-hatch",
+                HatchPlayEvent {
+                    fallback_state: fallback_state.clone(),
+                    sync_remote: should_sync_remote,
+                },
+            );
+            if should_sync_remote {
+                crate::remote::queue_hatch_action(&fallback_state);
+            }
+            return;
+        }
         let _ = update_state(|current| RuntimeState {
             pet: current.pet,
             state: state_name.to_string(),

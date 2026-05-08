@@ -44,6 +44,12 @@ const RECONNECT_MAX_SECS: f64 = 60.0;
 const RECONNECT_BACKOFF: f64 = 2.0;
 const POLL_INTERVAL_MS: u64 = 200;
 
+#[derive(Debug, Clone)]
+enum OutboundControl {
+    Hatch { fallback_state: String },
+    State { state: String },
+}
+
 #[derive(Debug, Default)]
 struct RemoteRuntimeSnapshot {
     connected: bool,
@@ -64,6 +70,37 @@ fn with_runtime_snapshot<R>(f: impl FnOnce(&mut RemoteRuntimeSnapshot) -> R) -> 
 
 pub fn can_leave_room() -> bool {
     with_runtime_snapshot(|snap| snap.connected && snap.peer_count > 0)
+}
+
+fn outbound_controls() -> &'static Mutex<VecDeque<OutboundControl>> {
+    static CONTROLS: OnceLock<Mutex<VecDeque<OutboundControl>>> = OnceLock::new();
+    CONTROLS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+pub fn queue_hatch_action(fallback_state: &str) {
+    let fallback = fallback_state.trim();
+    if fallback.is_empty() {
+        return;
+    }
+    let mut queue = outbound_controls()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.push_back(OutboundControl::Hatch {
+        fallback_state: fallback.to_string(),
+    });
+}
+
+pub fn queue_hatch_finish_state(state: &str) {
+    let state = state.trim();
+    if state.is_empty() {
+        return;
+    }
+    let mut queue = outbound_controls()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.push_back(OutboundControl::State {
+        state: state.to_string(),
+    });
 }
 
 // ---------- remote.json --------------------------------------------------
@@ -354,6 +391,12 @@ pub struct PeerSnapshot {
     pub config_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerHatchEvent {
+    pub device_id: String,
+    pub fallback_state: String,
+}
+
 fn build_status(
     cfg: &RemoteConfig,
     sprite: &str,
@@ -486,6 +529,30 @@ fn handle_incoming(app: &AppHandle, peers: &mut HashMap<String, PeerSnapshot>, m
             }
         }
         "peer_joined" | "peer_state" | "peer_action" | "peer_sprite_changed" => {
+            if msg_type == "peer_action"
+                && msg
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s == "hatch")
+                    .unwrap_or(false)
+            {
+                if let Some(device_id) = msg.get("device_id").and_then(|v| v.as_str()) {
+                    let fallback_state = msg
+                        .get("fallback_state")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("idle")
+                        .to_string();
+                    let _ = app.emit(
+                        "remote-peer-hatch",
+                        PeerHatchEvent {
+                            device_id: device_id.to_string(),
+                            fallback_state,
+                        },
+                    );
+                }
+            }
             if let Some(id) = msg.get("device_id").and_then(|v| v.as_str()) {
                 let updated = merge_peer_update(peers.get(id), &msg);
                 if let Some(p) = updated {
@@ -592,6 +659,7 @@ async fn run_actor(
     let mut last_status_payload: Option<String> = None;
     let mut pending_chat_outbox: VecDeque<bubbles::ChatOutboxFile> = VecDeque::new();
     let mut pending_chat_paths: HashSet<String> = HashSet::new();
+    let mut pending_controls: VecDeque<OutboundControl> = VecDeque::new();
     // Name of the sprite we last successfully ran ensure_pet_uploaded for on
     // the current `cfg.server_url`. Used to skip a redundant hash-skip GET
     // when the connect block already uploaded this exact sprite on the same
@@ -642,6 +710,14 @@ async fn run_actor(
             last_state = cur;
         }
         let current_sprite = last_state.pet.clone();
+        {
+            let mut queue = outbound_controls()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            while let Some(item) = queue.pop_front() {
+                pending_controls.push_back(item);
+            }
+        }
 
         let signature = config_signature(&cfg);
 
@@ -830,7 +906,14 @@ async fn run_actor(
         if disconnect_reason.is_none() {
             if let Some(s) = session.as_mut() {
                 let outgoing_is_sprite = pending_sprite_announce;
+                let outgoing_control = if !pending_sprite_announce {
+                    pending_controls.pop_front()
+                } else {
+                    None
+                };
+                let outgoing_is_control = outgoing_control.is_some();
                 let outgoing_is_chat = !pending_sprite_announce
+                    && !outgoing_is_control
                     && !(pending_state_sync
                         || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false))
                     && !pending_chat_outbox.is_empty();
@@ -848,6 +931,21 @@ async fn run_actor(
                         "state": last_state.state,
                         "sprite": last_state.pet,
                     }))
+                } else if let Some(ctrl) = outgoing_control {
+                    match ctrl {
+                        OutboundControl::Hatch { fallback_state } => Some(json!({
+                            "type": "action",
+                            "action": "hatch",
+                            "state": "hatch",
+                            "fallback_state": fallback_state,
+                            "sprite": last_state.pet,
+                        })),
+                        OutboundControl::State { state } => Some(json!({
+                            "type": "state",
+                            "state": state,
+                            "sprite": last_state.pet,
+                        })),
+                    }
                 } else if outgoing_is_chat {
                     pending_chat_outbox.front().map(|out| {
                         json!({
@@ -863,8 +961,14 @@ async fn run_actor(
                 if let Some(payload) = outgoing {
                     match s.send_json(payload).await {
                         Ok(()) => {
-                            pending_sprite_announce = false;
-                            pending_state_sync = false;
+                            if outgoing_is_sprite {
+                                pending_sprite_announce = false;
+                                pending_state_sync = false;
+                            } else if outgoing_is_control {
+                                pending_state_sync = false;
+                            } else if !outgoing_is_chat {
+                                pending_state_sync = false;
+                            }
                             next_heartbeat =
                                 Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
                             // Re-emit status after a sprite swap so the frontend's

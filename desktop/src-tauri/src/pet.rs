@@ -34,7 +34,6 @@ const BUILTIN_STATES: [&str; 9] = [
     "review",
 ];
 
-const HATCH_FIXED_STATES: [&str; 5] = ["unborn", "ready", "hatching", "hatched", "walk"];
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AnimationStateDef {
@@ -296,22 +295,16 @@ fn sanitize_manifest_states(manifest: &mut PetManifest) -> bool {
         }
     }
 
-    // `hatch`: all-or-nothing. If incomplete/invalid, ignore hatch states
-    // but keep the manifest usable.
-    if manifest.hatch.is_empty() {
-        return true;
-    }
-    if manifest.hatch.len() != HATCH_FIXED_STATES.len() {
-        manifest.hatch.clear();
-        return true;
-    }
-    for (idx, expected) in HATCH_FIXED_STATES.iter().enumerate() {
-        let got = manifest.hatch[idx].state.trim();
-        if got != *expected {
-            manifest.hatch.clear();
-            return true;
+    // `hatch`: optional and partial-friendly; keep only entries with
+    // non-empty unique names so a malformed element won't break the whole pet.
+    let mut hatch_seen = BTreeSet::new();
+    manifest.hatch.retain(|def| {
+        let name = def.state.trim();
+        if name.is_empty() {
+            return false;
         }
-    }
+        hatch_seen.insert(name.to_string())
+    });
     true
 }
 

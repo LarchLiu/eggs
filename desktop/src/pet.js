@@ -37,8 +37,6 @@
     { state: "review",        row: 8, frames: 6, durations: [150, 150, 150, 150, 150, 280] },
   ];
   const BUILTIN_STATE_SET = new Set(BUILTIN_LAYOUT.map((row) => row.state));
-  const HATCH_FIXED_STATES = ["unborn", "ready", "hatching", "hatched", "walk"];
-
   function normalizeAnimDef(raw) {
     if (!raw || typeof raw !== "object") return null;
     const state = typeof raw.state === "string" ? raw.state.trim() : "";
@@ -70,22 +68,37 @@
       }
     };
     append(manifest && manifest.custom);
-    const hatch = manifest && Array.isArray(manifest.hatch) ? manifest.hatch : [];
-    const hasHatch = hatch.length > 0;
-    const hatchIsComplete = hasHatch
-      && hatch.length === HATCH_FIXED_STATES.length
-      && hatch.every((raw, idx) => {
-        const state = raw && typeof raw.state === "string" ? raw.state.trim() : "";
-        return state === HATCH_FIXED_STATES[idx];
-      });
-    if (hatchIsComplete) {
-      append(hatch);
-    } else if (hasHatch) {
-      console.warn("Ignoring invalid hatch states: hatch must define exactly unborn,ready,hatching,hatched,walk");
-    }
+    append(manifest && manifest.hatch);
     const layout = [...BUILTIN_LAYOUT, ...extra];
     const byState = Object.fromEntries(layout.map((entry) => [entry.state, entry]));
-    return { layout, byState };
+    const hatchOrder = [];
+    const hatchSeen = new Set();
+    if (manifest && Array.isArray(manifest.hatch)) {
+      for (const raw of manifest.hatch) {
+        const def = normalizeAnimDef(raw);
+        if (!def) continue;
+        if (hatchSeen.has(def.state)) continue;
+        hatchSeen.add(def.state);
+        hatchOrder.push(def.state);
+      }
+    }
+    return { layout, byState, hatchOrder };
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function hatchTotalDuration(row) {
+    if (!row) return 0;
+    const count = Math.max(0, Number(row.frames) || 0);
+    if (count <= 0) return 0;
+    let total = 0;
+    for (let i = 0; i < count; i += 1) {
+      const n = Number(row.durations && row.durations[i]);
+      total += Number.isFinite(n) && n > 0 ? n : 150;
+    }
+    return total;
   }
 
   class PetView {
@@ -159,6 +172,9 @@
     el.dataset.grab = "false";
 
     let current = { pet: "", state: "idle", scale_millis: 1000 };
+    let hatchedPets = new Set();
+    let hatchRunToken = 0;
+    let currentHatchOrder = [];
 
     function scaleFromMillis(scaleMillis) {
       return scaleMillis / 1000;
@@ -173,12 +189,60 @@
         if (manifest && manifest.spritesheetAbs) {
           pet.setSheet(convertFileSrc(manifest.spritesheetAbs));
         }
-        const { layout, byState } = buildLayout(manifest);
+        const { layout, byState, hatchOrder } = buildLayout(manifest);
         pet.setLayout(layout, byState);
+        currentHatchOrder = hatchOrder;
       } catch (e) {
         console.error(`load_pet(${id}) failed:`, e);
         pet.setLayout(BUILTIN_LAYOUT, Object.fromEntries(BUILTIN_LAYOUT.map((entry) => [entry.state, entry])));
+        currentHatchOrder = [];
       }
+    }
+
+    async function runHatchSequence({ petId, fallbackState = "idle", markCompleted = false, syncRemoteFallback = false }) {
+      if (!petId || !Array.isArray(currentHatchOrder) || currentHatchOrder.length === 0) return false;
+      hatchRunToken += 1;
+      const token = hatchRunToken;
+      for (const stateName of currentHatchOrder) {
+        if (token !== hatchRunToken) return false;
+        const row = pet.byState[stateName];
+        if (!row) continue;
+        pet.setState(stateName);
+        const total = hatchTotalDuration(row);
+        if (total > 0) {
+          await sleep(total);
+        } else {
+          await sleep(120);
+        }
+      }
+      if (token !== hatchRunToken) return false;
+      if (markCompleted) {
+        try {
+          await invoke("mark_pet_hatched", { petId });
+          hatchedPets.add(petId);
+        } catch (e) {
+          console.warn("mark_pet_hatched failed", e);
+        }
+      }
+      if (fallbackState && pet.byState[fallbackState]) {
+        pet.setState(fallbackState);
+      } else if (pet.byState.idle) {
+        pet.setState("idle");
+      }
+      if (syncRemoteFallback) {
+        try {
+          await invoke("queue_hatch_finish_state", { state: fallbackState || "idle" });
+        } catch (e) {
+          console.warn("queue_hatch_finish_state failed", e);
+        }
+      }
+      return true;
+    }
+
+    async function playHatchIfNeeded(petId, fallbackState) {
+      if (!petId || !Array.isArray(currentHatchOrder) || currentHatchOrder.length === 0) return;
+      if (hatchedPets.has(petId)) return;
+      await runHatchSequence({ petId, fallbackState, markCompleted: true });
     }
 
     // Initial state.json read
@@ -187,9 +251,18 @@
     } catch (e) {
       console.warn("read_state failed, using defaults", e);
     }
+    try {
+      const completed = await invoke("read_hatched_pets");
+      if (Array.isArray(completed)) {
+        hatchedPets = new Set(completed.filter((id) => typeof id === "string" && id.trim()));
+      }
+    } catch (e) {
+      console.warn("read_hatched_pets failed", e);
+    }
     pet.setScale(scaleFromMillis(current.scale_millis ?? 1000));
     await loadPet(current.pet);
     pet.setState(current.state);
+    await playHatchIfNeeded(current.pet, current.state);
 
     // list_states() is menu-oriented and does not include hatch states.
 
@@ -198,6 +271,7 @@
       const next = evt.payload;
       if (!next) return;
       if (next.pet !== current.pet) {
+        hatchRunToken += 1;
         await loadPet(next.pet);
       }
       if (next.state !== current.state) {
@@ -205,6 +279,9 @@
       }
       if (next.scale_millis !== current.scale_millis) {
         pet.setScale(scaleFromMillis(next.scale_millis));
+      }
+      if (next.pet !== current.pet) {
+        await playHatchIfNeeded(next.pet, next.state);
       }
       current = next;
     });
@@ -258,6 +335,20 @@
     });
     await listen("remote-peers", (evt) => {
       console.log("[remote-peers]", evt.payload);
+    });
+
+    await listen("play-hatch", async (evt) => {
+      const payload = evt && evt.payload ? evt.payload : {};
+      const fallbackState = typeof payload.fallback_state === "string" && payload.fallback_state.trim()
+        ? payload.fallback_state.trim()
+        : current.state;
+      const syncRemote = !!payload.sync_remote;
+      await runHatchSequence({
+        petId: current.pet,
+        fallbackState,
+        markCompleted: false,
+        syncRemoteFallback: syncRemote,
+      });
     });
   }
 
