@@ -18,9 +18,7 @@
   const CELL_W = 192;
   const CELL_H = 208;
 
-  // Identical to the local-pet contract; duplicated so peer.js stays
-  // self-contained (no shared module loader).
-  const LAYOUT = [
+  const BUILTIN_LAYOUT = [
     { state: "idle",          row: 0, frames: 6, durations: [280, 110, 110, 140, 140, 320] },
     { state: "running-right", row: 1, frames: 8, durations: [120, 120, 120, 120, 120, 120, 120, 220] },
     { state: "running-left",  row: 2, frames: 8, durations: [120, 120, 120, 120, 120, 120, 120, 220] },
@@ -31,12 +29,61 @@
     { state: "running",       row: 7, frames: 6, durations: [120, 120, 120, 120, 120, 220] },
     { state: "review",        row: 8, frames: 6, durations: [150, 150, 150, 150, 150, 280] },
   ];
-  const BY_STATE = Object.fromEntries(LAYOUT.map((r) => [r.state, r]));
+  const HATCH_FIXED_STATES = ["unborn", "ready", "hatching", "hatched", "walk"];
+
+  function normalizeAnimDef(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const state = typeof raw.state === "string" ? raw.state.trim() : "";
+    const row = Number(raw.row);
+    const frames = Number(raw.frames);
+    const rawDurations = Array.isArray(raw.durations) ? raw.durations : [];
+    if (!state || !Number.isInteger(row) || row < 0 || !Number.isInteger(frames) || frames <= 0) {
+      return null;
+    }
+    const durations = [];
+    for (let i = 0; i < frames; i += 1) {
+      const n = Number(rawDurations[i]);
+      durations.push(Number.isFinite(n) && n > 0 ? Math.round(n) : 150);
+    }
+    return { state, row, frames, durations };
+  }
+
+  function buildLayout(manifest) {
+    const extra = [];
+    const seen = new Set(BUILTIN_LAYOUT.map((entry) => entry.state));
+    const append = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const raw of list) {
+        const def = normalizeAnimDef(raw);
+        if (!def) continue;
+        if (seen.has(def.state)) continue;
+        seen.add(def.state);
+        extra.push(def);
+      }
+    };
+    append(manifest && manifest.custom);
+    const hatch = manifest && Array.isArray(manifest.hatch) ? manifest.hatch : [];
+    const hasHatch = hatch.length > 0;
+    const hatchIsComplete = hasHatch
+      && hatch.length === HATCH_FIXED_STATES.length
+      && hatch.every((raw, idx) => {
+        const state = raw && typeof raw.state === "string" ? raw.state.trim() : "";
+        return state === HATCH_FIXED_STATES[idx];
+      });
+    if (hatchIsComplete) {
+      append(hatch);
+    }
+    const layout = [...BUILTIN_LAYOUT, ...extra];
+    const byState = Object.fromEntries(layout.map((entry) => [entry.state, entry]));
+    return { layout, byState };
+  }
 
   class PetView {
     constructor(el, scale = 1.0) {
       this.el = el;
-      this.row = LAYOUT[0];
+      this.layout = BUILTIN_LAYOUT;
+      this.byState = Object.fromEntries(BUILTIN_LAYOUT.map((entry) => [entry.state, entry]));
+      this.row = BUILTIN_LAYOUT[0];
       this.frame = 0;
       this.timer = null;
       this.scale = scale;
@@ -64,10 +111,21 @@
       this.el.style.backgroundImage = `url("${url}")`;
     }
     setState(name) {
-      const next = BY_STATE[name];
+      const next = this.byState[name];
       if (!next || next === this.row) return;
       this.row = next;
       this.frame = 0;
+    }
+    setLayout(layout, byState) {
+      this.layout = Array.isArray(layout) && layout.length > 0 ? layout : BUILTIN_LAYOUT;
+      this.byState = byState && typeof byState === "object"
+        ? byState
+        : Object.fromEntries(this.layout.map((entry) => [entry.state, entry]));
+      const next = this.byState[this.row.state] || this.layout[0] || BUILTIN_LAYOUT[0];
+      if (next !== this.row) {
+        this.row = next;
+        this.frame = 0;
+      }
     }
     tick() {
       const w = Math.round(CELL_W * this.scale);
@@ -114,6 +172,19 @@
     }
     if (init.sprite_path_abs) {
       pet.setSheet(convertFileSrc(init.sprite_path_abs));
+    }
+    if (init.json_path_abs) {
+      try {
+        const manifestUrl = convertFileSrc(init.json_path_abs);
+        const resp = await fetch(manifestUrl);
+        if (resp.ok) {
+          const manifest = await resp.json();
+          const { layout, byState } = buildLayout(manifest);
+          pet.setLayout(layout, byState);
+        }
+      } catch (e) {
+        console.warn("peer manifest parse failed; using builtin layout", e);
+      }
     }
     if (init.state) {
       pet.setState(init.state);

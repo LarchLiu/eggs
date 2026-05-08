@@ -56,9 +56,35 @@ pub fn list_states() -> Vec<String> {
     PET_STATES.iter().map(|s| (*s).to_string()).collect()
 }
 
+fn custom_menu_states_for_pet(pet_id: &str) -> Vec<String> {
+    if pet_id.trim().is_empty() {
+        return Vec::new();
+    }
+    let manifest = match pet::load_pet(pet_id) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for def in manifest.custom {
+        let name = def.state.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if PET_STATES.contains(&name) {
+            continue;
+        }
+        if out.iter().any(|existing| existing == name) {
+            continue;
+        }
+        out.push(name.to_string());
+    }
+    out
+}
+
 pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
     let current = state::read_state().map_err(|e| e.to_string())?;
     let pets = pet::list_installed_pets().map_err(|e| e.to_string())?;
+    let custom_states = custom_menu_states_for_pet(&current.pet);
 
     let pet_submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
     let (local_pets, remote_pets): (Vec<_>, Vec<_>) =
@@ -123,6 +149,18 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
             app,
             format!("{STATE_PREFIX}{state_name}"),
             state_name,
+            true,
+            state_name == current.state,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        state_submenu.append(&item).map_err(|e| e.to_string())?;
+    }
+    for state_name in custom_states {
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("{STATE_PREFIX}{state_name}"),
+            state_name.clone(),
             true,
             state_name == current.state,
             Option::<&str>::None,

@@ -22,6 +22,29 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+const BUILTIN_STATES: [&str; 9] = [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review",
+];
+
+const HATCH_FIXED_STATES: [&str; 5] = ["unborn", "ready", "hatching", "hatched", "walk"];
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AnimationStateDef {
+    pub state: String,
+    pub row: u16,
+    pub frames: u16,
+    #[serde(default)]
+    pub durations: Vec<u16>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PetManifest {
     pub id: String,
@@ -31,6 +54,13 @@ pub struct PetManifest {
     pub description: String,
     #[serde(rename = "spritesheetPath")]
     pub spritesheet_path: String,
+    /// Custom animation states appended after the built-in 9 states.
+    #[serde(default)]
+    pub custom: Vec<AnimationStateDef>,
+    /// Hatch-process-only states (playable by state name, but intentionally
+    /// hidden from the right-click State menu).
+    #[serde(default)]
+    pub hatch: Vec<AnimationStateDef>,
 
     /// Absolute path to the spritesheet, populated server-side so the webview
     /// can resolve it through the asset protocol.
@@ -236,6 +266,9 @@ fn load_manifest_from_dir(
         let Ok(mut manifest) = serde_json::from_str::<PetManifest>(&text) else {
             continue;
         };
+        if !sanitize_manifest_states(&mut manifest) {
+            continue;
+        }
         if let Some(id) = requested_id {
             manifest.id = id.to_string();
         }
@@ -245,6 +278,41 @@ fn load_manifest_from_dir(
         return Some((manifest, manifest_path));
     }
     None
+}
+
+fn sanitize_manifest_states(manifest: &mut PetManifest) -> bool {
+    // `custom`: non-empty name, non-duplicate, and cannot override built-ins.
+    let mut custom_seen = BTreeSet::new();
+    for def in &manifest.custom {
+        let name = def.state.trim();
+        if name.is_empty() {
+            return false;
+        }
+        if BUILTIN_STATES.contains(&name) {
+            return false;
+        }
+        if !custom_seen.insert(name.to_string()) {
+            return false;
+        }
+    }
+
+    // `hatch`: all-or-nothing. If incomplete/invalid, ignore hatch states
+    // but keep the manifest usable.
+    if manifest.hatch.is_empty() {
+        return true;
+    }
+    if manifest.hatch.len() != HATCH_FIXED_STATES.len() {
+        manifest.hatch.clear();
+        return true;
+    }
+    for (idx, expected) in HATCH_FIXED_STATES.iter().enumerate() {
+        let got = manifest.hatch[idx].state.trim();
+        if got != *expected {
+            manifest.hatch.clear();
+            return true;
+        }
+    }
+    true
 }
 
 fn resolve_spritesheet_path(dir: &Path, manifest: &PetManifest) -> Option<PathBuf> {
