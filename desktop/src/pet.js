@@ -22,6 +22,7 @@
 
   const CELL_W = 192;
   const CELL_H = 208;
+  const DRAG_THRESHOLD_PX = 6;
 
   // Built-in states (Codex pet baseline). A pet manifest can append more
   // states via { custom: [...], hatch: [...] }.
@@ -287,23 +288,44 @@
     });
 
     const win = getCurrentWindow();
+    let pointerDown = false;
+    let dragStarted = false;
+    let downPoint = null;
 
     window.addEventListener("mousedown", async (e) => {
       if (e.button === 0) {
+        pointerDown = true;
+        dragStarted = false;
+        downPoint = { x: e.clientX, y: e.clientY };
         el.dataset.grab = "true";
-        try {
-          await win.startDragging();
-        } catch (err) {
-          console.warn("startDragging failed", err);
-          el.dataset.grab = "false";
-        }
+      }
+    });
+
+    window.addEventListener("mousemove", async (e) => {
+      if (!pointerDown || dragStarted || !downPoint) return;
+      const dx = e.clientX - downPoint.x;
+      const dy = e.clientY - downPoint.y;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      dragStarted = true;
+      try {
+        await win.startDragging();
+      } catch (err) {
+        console.warn("startDragging failed", err);
+        dragStarted = false;
+        el.dataset.grab = "false";
       }
     });
 
     window.addEventListener("mouseup", () => {
+      pointerDown = false;
+      dragStarted = false;
+      downPoint = null;
       el.dataset.grab = "false";
     });
     window.addEventListener("mouseleave", () => {
+      pointerDown = false;
+      dragStarted = false;
+      downPoint = null;
       el.dataset.grab = "false";
     });
 

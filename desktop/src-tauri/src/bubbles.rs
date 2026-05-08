@@ -931,6 +931,10 @@ fn build_bubble_window(app: &AppHandle, bubble_id: &str, mode: BubbleMode) -> ta
         .visible_on_all_workspaces(true);
     let window = builder.build()?;
     let _ = window.set_ignore_cursor_events(false);
+    if focused {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 
