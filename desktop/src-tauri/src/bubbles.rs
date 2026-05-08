@@ -16,12 +16,15 @@ use crate::state;
 pub const BUBBLE_WIDTH: f64 = 224.0;
 pub const BUBBLE_MIN_HEIGHT: f64 = 20.0;
 pub const BUBBLE_MAX_HEIGHT: f64 = 60.0;
+pub const INPUT_MIN_HEIGHT: f64 = 50.0;
+pub const INPUT_MAX_HEIGHT: f64 = 100.0;
 const DEFAULT_HOOK_TTL_MS: u64 = 8_000;
 const DEFAULT_USER_TTL_MS: u64 = 12_000;
 const MAX_BUBBLE_TEXT_CHARS: usize = 2_000;
 const CHAT_HISTORY_LIMIT: usize = 5;
 const LABEL_PREFIX: &str = "bubble-";
 const CHAT_WINDOW_PREFIX: &str = "chat-";
+const INPUT_WINDOW_PREFIX: &str = "input-";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -137,6 +140,7 @@ struct ChatHistoryFile {
 enum BubbleMode {
     Hook,
     Chat,
+    Input,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -176,6 +180,7 @@ impl OpenBubble {
             mode: match self.mode {
                 BubbleMode::Hook => "hook".to_string(),
                 BubbleMode::Chat => "chat".to_string(),
+                BubbleMode::Input => "input".to_string(),
             },
             text: self.text.clone(),
             messages,
@@ -311,53 +316,56 @@ impl BubbleWindowManager {
             }
         }
 
-        // Chat cross layout:
+        // Chat cross layout, sorted purely by anchor.x so that list
+        // adjacency reflects on-screen adjacency:
         // 0,2,4... stick close to the sprite; 1,3,5... one tier higher.
         let mut chat_tier_by_owner: HashMap<String, u8> = HashMap::new();
         let mut chat_owners: Vec<(String, f64)> = entries
             .iter()
-            .filter(|e| e.mode == BubbleMode::Chat)
+            .filter(|e| is_chat_like(e.mode))
             .filter_map(|e| {
                 let k = e.owner.to_key();
                 anchor_by_owner.get(&k).map(|a| (k, a.x))
             })
             .collect();
-        chat_owners.sort_by(|a, b| {
-            let a_local = a.0 == "local";
-            let b_local = b.0 == "local";
-            b_local
-                .cmp(&a_local)
-                .then(a.1.total_cmp(&b.1))
-                .then(a.0.cmp(&b.0))
-        });
+        chat_owners.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         chat_owners.dedup_by(|a, b| a.0 == b.0);
         for (idx, (owner_key, _)) in chat_owners.iter().enumerate() {
             let tier = if idx % 2 == 0 { 0 } else { 1 };
             chat_tier_by_owner.insert(owner_key.clone(), tier);
         }
 
-        // Per-tier max chat-bubble height. Tier N's lift must clear the
-        // tallest bubble in every lower tier (otherwise a short tier-1 bubble
-        // can dip into a tall tier-0 bubble — the original bug was using
-        // each bubble's own height for the lift, which only works when all
-        // tiers happen to share the same height).
-        let mut tier_max_height: HashMap<u8, f64> = HashMap::new();
-        for entry in entries.iter().filter(|e| e.mode == BubbleMode::Chat) {
-            let k = entry.owner.to_key();
-            if let Some(&tier) = chat_tier_by_owner.get(&k) {
-                let cur = tier_max_height.entry(tier).or_insert(0.0);
-                if entry.height > *cur {
-                    *cur = entry.height;
+        // Each tier-1 owner lifts only over its immediate x-neighbours
+        // (idx-1 / idx+1 in the sorted list, which are both tier 0 by the
+        // cross layout). A global tier-0 max would over-raise short
+        // bubbles that share a tier with a tall bubble far away — e.g.
+        // a 1-line bubble between two 2-line bubbles shouldn't be lifted
+        // because of a 3-line bubble at the far end of the screen.
+        let mut height_by_owner: HashMap<String, f64> = HashMap::new();
+        for entry in entries.iter().filter(|e| is_chat_like(e.mode)) {
+            height_by_owner.insert(entry.owner.to_key(), entry.height);
+        }
+        let mut chat_lift_by_owner: HashMap<String, f64> = HashMap::new();
+        for (idx, (owner_key, _)) in chat_owners.iter().enumerate() {
+            let tier = chat_tier_by_owner.get(owner_key).copied().unwrap_or(0);
+            if tier == 0 {
+                chat_lift_by_owner.insert(owner_key.clone(), 0.0);
+                continue;
+            }
+            let mut neighbour_max = 0.0_f64;
+            if idx > 0 {
+                if let Some((k, _)) = chat_owners.get(idx - 1) {
+                    if let Some(h) = height_by_owner.get(k) {
+                        neighbour_max = neighbour_max.max(*h);
+                    }
                 }
             }
-        }
-        let max_tier = tier_max_height.keys().copied().max().unwrap_or(0);
-        let mut chat_lift_by_tier: HashMap<u8, f64> = HashMap::new();
-        chat_lift_by_tier.insert(0, 0.0);
-        let mut acc = 0.0;
-        for t in 0..max_tier {
-            acc += tier_max_height.get(&t).copied().unwrap_or(0.0) + 6.0;
-            chat_lift_by_tier.insert(t + 1, acc);
+            if let Some((k, _)) = chat_owners.get(idx + 1) {
+                if let Some(h) = height_by_owner.get(k) {
+                    neighbour_max = neighbour_max.max(*h);
+                }
+            }
+            chat_lift_by_owner.insert(owner_key.clone(), neighbour_max + 6.0);
         }
 
         let mut per_owner_hook_offset: HashMap<String, f64> = HashMap::new();
@@ -373,11 +381,10 @@ impl BubbleWindowManager {
             } else {
                 0.0
             };
-            let chat_tier = *chat_tier_by_owner.get(&owner_key).unwrap_or(&0);
-            let chat_lift = *chat_lift_by_tier.get(&chat_tier).unwrap_or(&0.0);
+            let chat_lift = *chat_lift_by_owner.get(&owner_key).unwrap_or(&0.0);
 
             let preferred = preferred_position(&entry, &anchor, hook_offset, chat_lift);
-            let resolved = if entry.mode == BubbleMode::Chat {
+            let resolved = if is_chat_like(entry.mode) {
                 preferred
             } else {
                 resolve_collision(preferred, entry.mode, &anchor, &placed, entry.height)
@@ -469,7 +476,7 @@ impl BubbleWindowManager {
         };
 
         if should_open {
-            if let Err(e) = build_bubble_window(app, &id) {
+            if let Err(e) = build_bubble_window(app, &id, BubbleMode::Hook) {
                 eprintln!("could not open hook bubble window for {id}: {e}");
                 let mut store = self.store.lock().await;
                 store.open.remove(&id);
@@ -536,7 +543,7 @@ impl BubbleWindowManager {
         };
 
         if need_open {
-            if let Err(e) = build_bubble_window(app, &id) {
+            if let Err(e) = build_bubble_window(app, &id, BubbleMode::Chat) {
                 eprintln!("could not open chat bubble window for {id}: {e}");
                 let mut store = self.store.lock().await;
                 store.open.remove(&id);
@@ -565,7 +572,132 @@ impl BubbleWindowManager {
     pub async fn set_height(&self, bubble_id: &str, height: f64) {
         let mut store = self.store.lock().await;
         if let Some(open) = store.open.get_mut(bubble_id) {
-            open.height = height.clamp(BUBBLE_MIN_HEIGHT, BUBBLE_MAX_HEIGHT);
+            let (min, max) = height_range_for_mode(open.mode);
+            open.height = height.clamp(min, max);
+        }
+    }
+
+    pub async fn allowed_height_range(&self, bubble_id: &str) -> (f64, f64) {
+        let store = self.store.lock().await;
+        let mode = store
+            .open
+            .get(bubble_id)
+            .map(|o| o.mode)
+            .unwrap_or(BubbleMode::Chat);
+        height_range_for_mode(mode)
+    }
+
+    pub async fn open_local_input(&self, app: &AppHandle) {
+        let chat_id = chat_window_id(&BubbleOwner::Local);
+        let input_id = local_input_id();
+
+        let already_open = {
+            let mut store = self.store.lock().await;
+            // If chat bubble for local is open, drop it from the store but keep
+            // the chat bucket — cancel needs to reopen it with the same history.
+            store.open.remove(&chat_id);
+
+            if store.open.contains_key(&input_id) {
+                true
+            } else {
+                store.open.insert(
+                    input_id.clone(),
+                    OpenBubble {
+                        id: input_id.clone(),
+                        owner: BubbleOwner::Local,
+                        source: BubbleSource::UserInput,
+                        mode: BubbleMode::Input,
+                        text: String::new(),
+                        messages: Vec::new(),
+                        ttl_ms: 0,
+                        created_ms: now_ms(),
+                        hovered: false,
+                        height: INPUT_MIN_HEIGHT,
+                    },
+                );
+                false
+            }
+        };
+
+        if let Some(win) = app.get_webview_window(&bubble_window_label(&chat_id)) {
+            let _ = win.close();
+        }
+
+        if !already_open {
+            if let Err(e) = build_bubble_window(app, &input_id, BubbleMode::Input) {
+                eprintln!("could not open input bubble window: {e}");
+                let mut store = self.store.lock().await;
+                store.open.remove(&input_id);
+                return;
+            }
+        } else if let Some(win) = app.get_webview_window(&bubble_window_label(&input_id)) {
+            let _ = win.set_focus();
+        }
+        self.reposition_all(app).await;
+    }
+
+    pub async fn close_local_input(&self, app: &AppHandle) {
+        let input_id = local_input_id();
+        let removed = {
+            let mut store = self.store.lock().await;
+            store.open.remove(&input_id).is_some()
+        };
+        if removed {
+            if let Some(win) = app.get_webview_window(&bubble_window_label(&input_id)) {
+                let _ = win.close();
+            }
+        }
+    }
+
+    pub async fn cancel_local_input(&self, app: &AppHandle) {
+        self.close_local_input(app).await;
+        self.reopen_local_chat_if_history(app).await;
+        self.reposition_all(app).await;
+    }
+
+    async fn reopen_local_chat_if_history(&self, app: &AppHandle) {
+        let owner = BubbleOwner::Local;
+        let owner_key = owner.to_key();
+        let id = chat_window_id(&owner);
+
+        let need_open = {
+            let mut store = self.store.lock().await;
+            let Some(bucket) = store.chat.get(&owner_key) else {
+                return;
+            };
+            if bucket.recent.is_empty() || bucket.dismissed || store.open.contains_key(&id) {
+                return;
+            }
+            let messages: Vec<ChatLine> = bucket.recent.iter().cloned().collect();
+            let latest = messages
+                .last()
+                .map(|m| m.text.clone())
+                .unwrap_or_default();
+            let last_ms = messages.last().map(|m| m.created_ms).unwrap_or_else(now_ms);
+            store.open.insert(
+                id.clone(),
+                OpenBubble {
+                    id: id.clone(),
+                    owner: owner.clone(),
+                    source: BubbleSource::UserInput,
+                    mode: BubbleMode::Chat,
+                    text: latest,
+                    messages,
+                    ttl_ms: 0,
+                    created_ms: last_ms,
+                    hovered: false,
+                    height: BUBBLE_MAX_HEIGHT,
+                },
+            );
+            true
+        };
+
+        if need_open {
+            if let Err(e) = build_bubble_window(app, &id, BubbleMode::Chat) {
+                eprintln!("could not reopen local chat bubble: {e}");
+                let mut store = self.store.lock().await;
+                store.open.remove(&id);
+            }
         }
     }
 }
@@ -597,11 +729,9 @@ pub fn queue_hook_message(text: &str) -> io::Result<Option<BubbleEvent>> {
     Ok(Some(event))
 }
 
-pub fn queue_local_user_message(text: &str, room_code: Option<String>) -> io::Result<Option<BubbleEvent>> {
-    let Some(clean) = normalize_text(text) else {
-        return Ok(None);
-    };
-    let event = BubbleEvent {
+pub fn build_local_user_event(text: &str, room_code: Option<String>) -> Option<BubbleEvent> {
+    let clean = normalize_text(text)?;
+    Some(BubbleEvent {
         id: make_id("user"),
         owner: BubbleOwner::Local,
         source: BubbleSource::UserInput,
@@ -610,6 +740,12 @@ pub fn queue_local_user_message(text: &str, room_code: Option<String>) -> io::Re
         created_ms: now_ms(),
         room_code,
         device_id: None,
+    })
+}
+
+pub fn queue_local_user_message(text: &str, room_code: Option<String>) -> io::Result<Option<BubbleEvent>> {
+    let Some(event) = build_local_user_event(text, room_code) else {
+        return Ok(None);
     };
     enqueue_bubble(event.clone())?;
     Ok(Some(event))
@@ -765,15 +901,24 @@ fn list_spool_files(dir: PathBuf) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn build_bubble_window(app: &AppHandle, bubble_id: &str) -> tauri::Result<()> {
+fn build_bubble_window(app: &AppHandle, bubble_id: &str, mode: BubbleMode) -> tauri::Result<()> {
     let label = bubble_window_label(bubble_id);
     if app.get_webview_window(&label).is_some() {
         return Ok(());
     }
-    let url = format!("bubble.html#{}", urlencoding(bubble_id));
+    let html = match mode {
+        BubbleMode::Input => "input.html",
+        _ => "bubble.html",
+    };
+    let url = format!("{}#{}", html, urlencoding(bubble_id));
+    let initial_height = match mode {
+        BubbleMode::Input => INPUT_MIN_HEIGHT,
+        _ => BUBBLE_MAX_HEIGHT,
+    };
+    let focused = matches!(mode, BubbleMode::Input);
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("Eggs Bubble")
-        .inner_size(BUBBLE_WIDTH, BUBBLE_MAX_HEIGHT)
+        .inner_size(BUBBLE_WIDTH, initial_height)
         .position(20.0, 20.0)
         .transparent(true)
         .decorations(false)
@@ -781,7 +926,7 @@ fn build_bubble_window(app: &AppHandle, bubble_id: &str) -> tauri::Result<()> {
         .skip_taskbar(true)
         .resizable(false)
         .shadow(false)
-        .focused(false)
+        .focused(focused)
         .accept_first_mouse(true)
         .visible_on_all_workspaces(true);
     let window = builder.build()?;
@@ -801,6 +946,10 @@ fn chat_window_id(owner: &BubbleOwner) -> String {
             sanitize_filename(device_id)
         ),
     }
+}
+
+fn local_input_id() -> String {
+    format!("{INPUT_WINDOW_PREFIX}local")
 }
 
 #[derive(Clone, Copy)]
@@ -859,7 +1008,7 @@ fn preferred_position(
     let x = (anchor.x + (anchor.w - BUBBLE_WIDTH) * 0.5)
         .clamp(8.0, (anchor.screen_w - BUBBLE_WIDTH - 8.0).max(8.0));
     let y = match open.mode {
-        BubbleMode::Chat => anchor.y - 8.0 - open.height - chat_lift,
+        BubbleMode::Chat | BubbleMode::Input => anchor.y - 8.0 - open.height - chat_lift,
         BubbleMode::Hook => anchor.y + anchor.h + 8.0 + hook_offset,
     };
     (
@@ -888,7 +1037,7 @@ fn resolve_collision(
     }
 
     match mode {
-        BubbleMode::Chat => {
+        BubbleMode::Chat | BubbleMode::Input => {
             let mut y_up = preferred.1;
             while y_up > 8.0 {
                 y_up = (y_up - step).max(8.0);
@@ -945,8 +1094,19 @@ fn resolve_collision(
 
 fn mode_rank(mode: BubbleMode) -> u8 {
     match mode {
-        BubbleMode::Chat => 0,
+        BubbleMode::Chat | BubbleMode::Input => 0,
         BubbleMode::Hook => 1,
+    }
+}
+
+fn is_chat_like(mode: BubbleMode) -> bool {
+    matches!(mode, BubbleMode::Chat | BubbleMode::Input)
+}
+
+fn height_range_for_mode(mode: BubbleMode) -> (f64, f64) {
+    match mode {
+        BubbleMode::Input => (INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT),
+        _ => (BUBBLE_MIN_HEIGHT, BUBBLE_MAX_HEIGHT),
     }
 }
 

@@ -161,12 +161,76 @@ async fn bubble_resize(
     bubble_id: String,
     height: f64,
 ) -> Result<(), String> {
-    let clamped = height.clamp(bubbles::BUBBLE_MIN_HEIGHT, bubbles::BUBBLE_MAX_HEIGHT);
+    let (min, max) = state.allowed_height_range(&bubble_id).await;
+    let clamped = height.clamp(min, max);
     window
         .set_size(LogicalSize::new(bubbles::BUBBLE_WIDTH, clamped))
         .map_err(|e| e.to_string())?;
     state.set_height(&bubble_id, clamped).await;
     state.reposition_all(&app).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_local_input(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state.open_local_input(&app).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_local_input(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state.cancel_local_input(&app).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_local_input(
+    state: tauri::State<'_, SharedBubbleWindowManager>,
+    app: tauri::AppHandle,
+    text: String,
+) -> Result<(), String> {
+    let remote = remote::read_remote_config();
+    let room_code = if remote.mode == "room" && !remote.room.trim().is_empty() {
+        Some(remote.room.trim().to_string())
+    } else {
+        None
+    };
+
+    let Some(event) = bubbles::build_local_user_event(&text, room_code.clone()) else {
+        // Empty after trim — just dismiss the input.
+        state.cancel_local_input(&app).await;
+        return Ok(());
+    };
+
+    state.close_local_input(&app).await;
+    state.show(&app, event.clone()).await;
+
+    if remote.enabled {
+        if let Err(e) = bubbles::enqueue_chat_outbox(&event.text, room_code.clone()) {
+            eprintln!("warning: could not enqueue chat outbox: {e}");
+        }
+    }
+
+    if let Some(room) = room_code {
+        let history = bubbles::ChatHistoryEntry {
+            id: event.id.clone(),
+            source: bubbles::BubbleSource::UserInput,
+            owner: bubbles::HistoryOwner::Local,
+            text: event.text.clone(),
+            created_ms: event.created_ms,
+            device_id: None,
+        };
+        if let Err(e) = bubbles::append_room_history(&room, history) {
+            eprintln!("warning: could not append room history: {e}");
+        }
+    }
+
     Ok(())
 }
 
@@ -212,6 +276,9 @@ fn main() {
             bubble_dismiss,
             bubble_constraints,
             bubble_resize,
+            open_local_input,
+            cancel_local_input,
+            send_local_input,
         ])
         .setup(move |app| {
             // Best-effort: if launched from a packaged install (.app on macOS,

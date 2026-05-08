@@ -182,6 +182,16 @@
       }
     });
 
+    window.addEventListener("dblclick", async (e) => {
+      e.preventDefault();
+      el.dataset.grab = "false";
+      try {
+        await invoke("open_local_input");
+      } catch (err) {
+        console.warn("open_local_input failed", err);
+      }
+    });
+
     // Remote multiplayer events. Visual rendering of peers is a follow-up;
     // for now we surface them in the devtools console so the protocol can
     // be verified end-to-end.
