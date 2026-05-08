@@ -31,7 +31,7 @@ mod upload;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewWindow};
+use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, WebviewWindow};
 
 use bubbles::{BubbleInit, BubbleWindowManager, SharedBubbleWindowManager};
 use peers::{PeerInit, PeerWindowManager, SharedPeerWindowManager};
@@ -242,7 +242,7 @@ fn main() {
                 let height = 208.0 * scale;
                 let _ = win.set_size(LogicalSize::new(width, height));
                 if let Some((x, y)) = saved_or_initial_pet_position(app, &current, width, height) {
-                    let _ = win.set_position(LogicalPosition::new(x, y));
+                    let _ = win.set_position(PhysicalPosition::new(x, y));
                 }
             }
 
@@ -387,9 +387,9 @@ fn saved_or_initial_pet_position(
     current: &state::RuntimeState,
     window_width: f64,
     window_height: f64,
-) -> Option<(f64, f64)> {
+) -> Option<(i32, i32)> {
     match (current.window_x, current.window_y) {
-        (Some(x), Some(y)) => Some((x as f64, y as f64)),
+        (Some(x), Some(y)) => Some((x, y)),
         _ => initial_pet_position(app, window_width, window_height),
     }
 }
@@ -404,15 +404,16 @@ fn initial_pet_position(
     app: &tauri::App,
     _window_width: f64,
     _window_height: f64,
-) -> Option<(f64, f64)> {
+) -> Option<(i32, i32)> {
     // Anchor at the top-left of the primary work area: peer windows are
     // stacked to the right with bottoms aligned (see peers::position_for_peer),
     // so a top-left anchor leaves the entire screen width available for peers
     // and keeps everything on-screen at any scale factor.
+    //
+    // work_area returns physical pixels; we keep physical throughout so the
+    // saved/restored round-trip stays correct on Retina (scale_factor != 1).
     let monitor = app.primary_monitor().ok().flatten()?;
     let work_area = monitor.work_area();
-    let margin = 20.0;
-    let x = work_area.position.x as f64 + margin;
-    let y = work_area.position.y as f64 + margin;
-    Some((x, y))
+    let margin = 20;
+    Some((work_area.position.x + margin, work_area.position.y + margin))
 }
