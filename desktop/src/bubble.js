@@ -102,7 +102,11 @@
     }
     const fontSize = parseFloat(computed.fontSize);
     if (Number.isFinite(fontSize) && fontSize > 0) {
-      return fontSize * 1.2;
+      const ratio =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue("--line-h"),
+        ) || 1.25;
+      return fontSize * ratio;
     }
     return 16;
   }
