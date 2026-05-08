@@ -34,6 +34,11 @@ const DEFAULT_ROOM_LIMIT: u16 = 5;
 const MIN_ROOM_LIMIT: u16 = 2;
 const MAX_ROOM_LIMIT: u16 = 100;
 const HEARTBEAT_SECS: u64 = 20;
+/// Tear down + reconnect if no frame (incl. server PINGs every 15s) has
+/// arrived in this window. Set to match the server's read timeout
+/// (`wsReadTimeout = 45s`); the server will already have given up by then,
+/// and TCP may not surface a dead socket on its own (e.g. after sleep/wake).
+const LIVENESS_TIMEOUT_SECS: u64 = 45;
 const RECONNECT_INITIAL_SECS: f64 = 2.0;
 const RECONNECT_MAX_SECS: f64 = 60.0;
 const RECONNECT_BACKOFF: f64 = 2.0;
@@ -202,6 +207,12 @@ type WsStream =
 struct Session {
     write: futures_util::stream::SplitSink<WsStream, Message>,
     read: futures_util::stream::SplitStream<WsStream>,
+    /// Last time we received any frame (text/binary/ping/pong/close).
+    /// Bumped inside `recv_json` so the outer loop can detect a silent
+    /// half-dead TCP connection (e.g. after the laptop wakes from sleep
+    /// and the OS hasn't surfaced the dead socket yet) and force a
+    /// reconnect. Compared against `LIVENESS_TIMEOUT_SECS`.
+    last_activity: Instant,
 }
 
 impl Session {
@@ -211,7 +222,11 @@ impl Session {
             .await
             .map_err(|e| e.to_string())?;
         let (write, read) = stream.split();
-        Ok(Self { write, read })
+        Ok(Self {
+            write,
+            read,
+            last_activity: Instant::now(),
+        })
     }
 
     async fn send_json(&mut self, value: Value) -> Result<(), String> {
@@ -226,14 +241,22 @@ impl Session {
         loop {
             match self.read.next().await {
                 Some(Ok(Message::Text(t))) => {
+                    self.last_activity = Instant::now();
                     return serde_json::from_str(&t).map_err(|e| e.to_string());
                 }
-                Some(Ok(Message::Binary(_))) => continue,
+                Some(Ok(Message::Binary(_))) => {
+                    self.last_activity = Instant::now();
+                    continue;
+                }
                 Some(Ok(Message::Ping(p))) => {
+                    self.last_activity = Instant::now();
                     let _ = self.write.send(Message::Pong(p)).await;
                     continue;
                 }
-                Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => continue,
+                Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {
+                    self.last_activity = Instant::now();
+                    continue;
+                }
                 Some(Ok(Message::Close(c))) => {
                     return Err(c
                         .map(|f| format!("server closed: {} {}", f.code, f.reason))
@@ -243,6 +266,10 @@ impl Session {
                 None => return Err("websocket stream ended".to_string()),
             }
         }
+    }
+
+    fn idle_for(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.last_activity)
     }
 
     async fn close(mut self) {
@@ -783,67 +810,91 @@ async fn run_actor(
             }
         }
 
+        // Detect a silently-dead WS (no PINGs, no messages from server in
+        // ~45s) and force a reconnect. TCP alone may not surface a half-dead
+        // socket — typical case: laptop sleeps, server times out and drops
+        // the peer, but on wake the local socket still appears writable so
+        // recv_json blocks forever and we never reconnect. The liveness
+        // probe (set below) is checked at the bottom of the loop together
+        // with disconnect_reason from send/recv.
+        let mut disconnect_reason: Option<String> = None;
+        if let Some(s) = session.as_ref() {
+            if s.idle_for() > Duration::from_secs(LIVENESS_TIMEOUT_SECS) {
+                disconnect_reason = Some(format!(
+                    "no activity from server in {LIVENESS_TIMEOUT_SECS}s"
+                ));
+            }
+        }
+
         // --- send pending outbound ---
-        if let Some(s) = session.as_mut() {
-            let outgoing_is_sprite = pending_sprite_announce;
-            let outgoing_is_chat = !pending_sprite_announce
-                && !(pending_state_sync
-                    || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false))
-                && !pending_chat_outbox.is_empty();
-            let outgoing = if pending_sprite_announce {
-                Some(json!({
-                    "type": "sprite",
-                    "sprite": last_state.pet,
-                    "state": last_state.state,
-                }))
-            } else if pending_state_sync
-                || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false)
-            {
-                Some(json!({
-                    "type": "state",
-                    "state": last_state.state,
-                    "sprite": last_state.pet,
-                }))
-            } else if outgoing_is_chat {
-                pending_chat_outbox.front().map(|out| {
-                    json!({
-                        "type": "chat",
-                        "id": out.item.id,
-                        "text": out.item.text,
-                        "created_ms": out.item.created_ms,
+        if disconnect_reason.is_none() {
+            if let Some(s) = session.as_mut() {
+                let outgoing_is_sprite = pending_sprite_announce;
+                let outgoing_is_chat = !pending_sprite_announce
+                    && !(pending_state_sync
+                        || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false))
+                    && !pending_chat_outbox.is_empty();
+                let outgoing = if pending_sprite_announce {
+                    Some(json!({
+                        "type": "sprite",
+                        "sprite": last_state.pet,
+                        "state": last_state.state,
+                    }))
+                } else if pending_state_sync
+                    || next_heartbeat.map(|t| Instant::now() >= t).unwrap_or(false)
+                {
+                    Some(json!({
+                        "type": "state",
+                        "state": last_state.state,
+                        "sprite": last_state.pet,
+                    }))
+                } else if outgoing_is_chat {
+                    pending_chat_outbox.front().map(|out| {
+                        json!({
+                            "type": "chat",
+                            "id": out.item.id,
+                            "text": out.item.text,
+                            "created_ms": out.item.created_ms,
+                        })
                     })
-                })
-            } else {
-                None
-            };
-            if let Some(payload) = outgoing {
-                match s.send_json(payload).await {
-                    Ok(()) => {
-                        pending_sprite_announce = false;
-                        pending_state_sync = false;
-                        next_heartbeat = Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
-                        // Re-emit status after a sprite swap so the frontend's
-                        // `RemoteStatus.sprite` field reflects the new pet
-                        // (without this, the in-place swap path no longer
-                        // hits the signature-drift emit at the top of the
-                        // loop, and the status would stay stale).
-                        if outgoing_is_sprite {
-                            let status = build_status(&cfg, &current_sprite, true, false, "");
-                            emit_if_changed(&status, &mut last_status_payload, &app);
-                        }
-                        if outgoing_is_chat {
-                            if let Some(sent) = pending_chat_outbox.pop_front() {
-                                let key = sent.path.to_string_lossy().to_string();
-                                pending_chat_paths.remove(&key);
-                                if let Err(e) = bubbles::acknowledge_chat_outbox(&sent.path) {
-                                    eprintln!("remote chat outbox ack failed: {e}");
+                } else {
+                    None
+                };
+                if let Some(payload) = outgoing {
+                    match s.send_json(payload).await {
+                        Ok(()) => {
+                            pending_sprite_announce = false;
+                            pending_state_sync = false;
+                            next_heartbeat =
+                                Some(Instant::now() + Duration::from_secs(HEARTBEAT_SECS));
+                            // Re-emit status after a sprite swap so the frontend's
+                            // `RemoteStatus.sprite` field reflects the new pet
+                            // (without this, the in-place swap path no longer
+                            // hits the signature-drift emit at the top of the
+                            // loop, and the status would stay stale).
+                            if outgoing_is_sprite {
+                                let status =
+                                    build_status(&cfg, &current_sprite, true, false, "");
+                                emit_if_changed(&status, &mut last_status_payload, &app);
+                            }
+                            if outgoing_is_chat {
+                                if let Some(sent) = pending_chat_outbox.pop_front() {
+                                    let key = sent.path.to_string_lossy().to_string();
+                                    pending_chat_paths.remove(&key);
+                                    if let Err(e) = bubbles::acknowledge_chat_outbox(&sent.path) {
+                                        eprintln!("remote chat outbox ack failed: {e}");
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        // Connection probably broken; let recv loop confirm.
-                        eprintln!("remote send failed: {e}");
+                        Err(e) => {
+                            // Send failure means the connection is broken — TCP
+                            // gave us a hard error, so don't wait for the recv
+                            // loop to time out. Surface it now so we tear down
+                            // and reconnect on this iteration.
+                            eprintln!("remote send failed: {e}");
+                            disconnect_reason = Some(format!("send failed: {e}"));
+                        }
                     }
                 }
             }
@@ -851,22 +902,23 @@ async fn run_actor(
 
         // --- pump receive with a short timeout so the outer loop can keep
         //     polling config + state.json without blocking forever ---
-        let mut disconnect_reason: Option<String> = None;
         let mut peers_changed = false;
-        if let Some(s) = session.as_mut() {
-            let recv_fut = s.recv_json();
-            tokio::pin!(recv_fut);
-            let timeout = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-            tokio::pin!(timeout);
-            tokio::select! {
-                msg = &mut recv_fut => match msg {
-                    Ok(value) => {
-                        handle_peer_chat(&cfg, &value);
-                        peers_changed = handle_incoming(&app, &mut peers, value);
-                    }
-                    Err(e) => { disconnect_reason = Some(e); }
-                },
-                _ = &mut timeout => {}
+        if disconnect_reason.is_none() {
+            if let Some(s) = session.as_mut() {
+                let recv_fut = s.recv_json();
+                tokio::pin!(recv_fut);
+                let timeout = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                tokio::pin!(timeout);
+                tokio::select! {
+                    msg = &mut recv_fut => match msg {
+                        Ok(value) => {
+                            handle_peer_chat(&cfg, &value);
+                            peers_changed = handle_incoming(&app, &mut peers, value);
+                        }
+                        Err(e) => { disconnect_reason = Some(e); }
+                    },
+                    _ = &mut timeout => {}
+                }
             }
         }
         if peers_changed {
