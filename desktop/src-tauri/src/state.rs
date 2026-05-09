@@ -72,6 +72,7 @@ pub fn read_state() -> io::Result<RuntimeState> {
         // First launch: persist a default state.json so the file is visible to
         // external tooling (CLI subcommands, Python egg_desktop.py) and the
         // pet poller's "did this change?" check has a stable starting point.
+        let _ = crate::pet::sync_builtin_pets();
         let s = default_state();
         let _ = write_state(&s);
         return Ok(s);
@@ -79,18 +80,31 @@ pub fn read_state() -> io::Result<RuntimeState> {
     let text = fs::read_to_string(&path)?;
     let mut s: RuntimeState =
         serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut changed = false;
     if s.pet.is_empty() {
-        s.pet = default_state().pet;
+        let _ = crate::pet::sync_builtin_pets();
+    }
+    let defaults = default_state();
+    if s.pet.is_empty() {
+        s.pet = defaults.pet.clone();
+        s.pet_source = defaults.pet_source.clone();
+        changed = true;
     }
     if s.pet_source.is_empty() {
         s.pet_source = crate::pet::preferred_source_for_pet(&s.pet)
-            .unwrap_or_else(default_pet_source_name);
+            .unwrap_or_else(|| defaults.pet_source.clone());
+        changed = true;
     }
     if s.state.is_empty() {
-        s.state = default_state().state;
+        s.state = defaults.state.clone();
+        changed = true;
     }
     if !matches!(s.scale_millis, 400 | 500 | 600 | 800 | 1000) {
         s.scale_millis = default_scale_millis();
+        changed = true;
+    }
+    if changed {
+        let _ = write_state(&s);
     }
     Ok(s)
 }
@@ -236,5 +250,71 @@ fn default_state() -> RuntimeState {
         scale_millis: default_scale_millis(),
         window_x: None,
         window_y: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_dir(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("eggs-state-{label}-{stamp}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn read_state_persists_default_pet_when_pet_is_empty() {
+        let app_dir = make_temp_dir("empty-pet");
+        let builtins = make_temp_dir("builtins");
+        let pet_dir = builtins.join("alpha");
+        fs::create_dir_all(&pet_dir).unwrap();
+        fs::write(
+            pet_dir.join("pet.json"),
+            r#"{
+  "id": "alpha",
+  "displayName": "Alpha",
+  "description": "",
+  "spritesheetPath": "spritesheet.png"
+}"#,
+        )
+        .unwrap();
+        fs::write(pet_dir.join("spritesheet.png"), b"png").unwrap();
+
+        unsafe {
+            std::env::set_var("EGGS_APP_DIR", &app_dir);
+            std::env::set_var("EGGS_BUILTIN_PETS_DIR", &builtins);
+        }
+
+        fs::write(
+            state_path(),
+            r#"{
+  "pet": "",
+  "pet_source": "",
+  "state": "idle",
+  "scale_millis": 1000
+}"#,
+        )
+        .unwrap();
+
+        let state = read_state().unwrap();
+        assert_eq!(state.pet, "alpha");
+        assert_eq!(state.pet_source, "builtin");
+
+        let persisted: RuntimeState = serde_json::from_str(&fs::read_to_string(state_path()).unwrap()).unwrap();
+        assert_eq!(persisted.pet, "alpha");
+        assert_eq!(persisted.pet_source, "builtin");
+
+        unsafe {
+            std::env::remove_var("EGGS_APP_DIR");
+            std::env::remove_var("EGGS_BUILTIN_PETS_DIR");
+        }
+        let _ = fs::remove_dir_all(app_dir);
+        let _ = fs::remove_dir_all(builtins);
     }
 }

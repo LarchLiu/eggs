@@ -103,6 +103,9 @@
       this.frame = 0;
       this.timer = null;
       this.scale = scale;
+      this.atlasWidth = null;
+      this.atlasHeight = null;
+      this.sheetLoadToken = 0;
       // Peers render facing the local pet: they live to the right of the
       // local sprite (see peers::position_for_peer), so flipping horizontally
       // makes both pets look at each other and turns "running-right" into
@@ -117,14 +120,35 @@
       const h = Math.round(CELL_H * this.scale);
       this.el.style.width = `${w}px`;
       this.el.style.height = `${h}px`;
-      this.el.style.backgroundSize = `${CELL_W * 8 * this.scale}px ${CELL_H * 9 * this.scale}px`;
+      if (this.atlasWidth && this.atlasHeight) {
+        this.el.style.backgroundSize = `${Math.round(this.atlasWidth * this.scale)}px ${Math.round(this.atlasHeight * this.scale)}px`;
+      } else {
+        this.el.style.backgroundSize = "";
+      }
     }
     setScale(scale) {
       this.scale = scale;
       this.applyScale();
     }
-    setSheet(url) {
-      this.el.style.backgroundImage = `url("${url}")`;
+    async setSheet(url) {
+      const token = ++this.sheetLoadToken;
+      try {
+        const { width, height } = await loadAtlasSize(url);
+        if (token !== this.sheetLoadToken) return;
+        if (width >= CELL_W && height >= CELL_H) {
+          this.atlasWidth = width;
+          this.atlasHeight = height;
+        }
+        this.applyScale();
+        this.el.style.backgroundImage = `url("${url}")`;
+      } catch (e) {
+        if (token !== this.sheetLoadToken) return;
+        console.warn(`atlas size probe failed for ${url}`, e);
+        this.atlasWidth = null;
+        this.atlasHeight = null;
+        this.applyScale();
+        this.el.style.backgroundImage = `url("${url}")`;
+      }
     }
     setState(name) {
       const next = this.byState[name];
@@ -155,6 +179,23 @@
         this.tick();
       }, dur);
     }
+  }
+
+  function loadAtlasSize(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const width = Number(img.naturalWidth) || 0;
+        const height = Number(img.naturalHeight) || 0;
+        if (width <= 0 || height <= 0) {
+          reject(new Error("atlas image reported empty size"));
+          return;
+        }
+        resolve({ width, height });
+      };
+      img.onerror = () => reject(new Error("atlas image failed to load"));
+      img.src = url;
+    });
   }
 
   function readDeviceId() {
@@ -189,7 +230,7 @@
       pet.setScale(init.scale_millis / 1000);
     }
     if (init.sprite_path_abs) {
-      pet.setSheet(convertFileSrc(init.sprite_path_abs));
+      await pet.setSheet(convertFileSrc(init.sprite_path_abs));
     }
     if (init.json_path_abs) {
       try {

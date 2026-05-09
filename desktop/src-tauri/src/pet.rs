@@ -12,9 +12,9 @@
 //   3. $CODEX_HOME/pets or ~/.codex/pets (legacy; lets users keep pets they
 //      installed via the Python desktop without copying them over.)
 //
-// The manifest itself is intentionally tiny -- the atlas geometry (8x9 cells
-// of 192x208) and per-state frame counts/durations are a hardcoded contract,
-// not data, and live in the frontend's LAYOUT table.
+// The manifest itself is intentionally tiny -- the cell size (192x208) and
+// per-state frame counts/durations are the contract, while the frontend now
+// derives the atlas pixel dimensions from the loaded image itself.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

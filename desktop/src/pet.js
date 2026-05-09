@@ -1,7 +1,9 @@
 // Eggs desktop pet — frontend.
 //
 // Consumes the Codex pet contract directly:
-//   * 8 columns x 9 rows atlas at 192x208 per cell.
+//   * Each cell is 192x208.
+//   * Atlas pixel dimensions come from the loaded image itself, so pets can
+//     ship extra animation rows without being vertically squashed.
 //   * Each row is one animation state with a fixed frame count and per-frame
 //     duration (LAYOUT below). Unused cells are transparent.
 //
@@ -111,6 +113,9 @@
       this.frame = 0;
       this.timer = null;
       this.scale = 1.0;
+      this.atlasWidth = null;
+      this.atlasHeight = null;
+      this.sheetLoadToken = 0;
       this.applyScale();
       this.tick();
     }
@@ -122,7 +127,11 @@
       document.documentElement.style.setProperty("--cell-h", `${displayH}px`);
       this.el.style.width = `${displayW}px`;
       this.el.style.height = `${displayH}px`;
-      this.el.style.backgroundSize = `${CELL_W * 8 * this.scale}px ${CELL_H * 9 * this.scale}px`;
+      if (this.atlasWidth && this.atlasHeight) {
+        this.el.style.backgroundSize = `${Math.round(this.atlasWidth * this.scale)}px ${Math.round(this.atlasHeight * this.scale)}px`;
+      } else {
+        this.el.style.backgroundSize = "";
+      }
     }
 
     setScale(scale) {
@@ -130,8 +139,25 @@
       this.applyScale();
     }
 
-    setSheet(url) {
-      this.el.style.backgroundImage = `url("${url}")`;
+    async setSheet(url) {
+      const token = ++this.sheetLoadToken;
+      try {
+        const { width, height } = await loadAtlasSize(url);
+        if (token !== this.sheetLoadToken) return;
+        if (width >= CELL_W && height >= CELL_H) {
+          this.atlasWidth = width;
+          this.atlasHeight = height;
+        }
+        this.applyScale();
+        this.el.style.backgroundImage = `url("${url}")`;
+      } catch (e) {
+        if (token !== this.sheetLoadToken) return;
+        console.warn(`atlas size probe failed for ${url}`, e);
+        this.atlasWidth = null;
+        this.atlasHeight = null;
+        this.applyScale();
+        this.el.style.backgroundImage = `url("${url}")`;
+      }
     }
 
     setState(name) {
@@ -167,6 +193,23 @@
     }
   }
 
+  function loadAtlasSize(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const width = Number(img.naturalWidth) || 0;
+        const height = Number(img.naturalHeight) || 0;
+        if (width <= 0 || height <= 0) {
+          reject(new Error("atlas image reported empty size"));
+          return;
+        }
+        resolve({ width, height });
+      };
+      img.onerror = () => reject(new Error("atlas image failed to load"));
+      img.src = url;
+    });
+  }
+
   async function main() {
     const el = document.getElementById("pet");
     const pet = new PetView(el);
@@ -195,7 +238,7 @@
         // `spritesheetAbs` is the absolute path Rust resolved; convertFileSrc
         // turns it into a webview-loadable asset:// URL.
         if (manifest && manifest.spritesheetAbs) {
-          pet.setSheet(convertFileSrc(manifest.spritesheetAbs));
+          await pet.setSheet(convertFileSrc(manifest.spritesheetAbs));
         }
         const { layout, byState, hatchOrder } = buildLayout(manifest);
         pet.setLayout(layout, byState);

@@ -224,7 +224,7 @@ Pet folder layout (matching the Codex hatch-pet contract):
 ```
 ~/.eggs/pets/<pet_id>/
     pet.json                # display name, frame metadata, atlas filename
-    spritesheet.webp        # or .png; 8 cols × 9 rows × 192×208 cells
+    spritesheet.webp        # or .png; 192×208 cells, row count inferred from image height
 ```
 
 ## Source layout
