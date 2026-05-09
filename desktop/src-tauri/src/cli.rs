@@ -58,10 +58,10 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                 2
             }
         },
-        "pet" => match argv.get(2) {
-            Some(id) => match crate::state::set_pet(id) {
+        "pet" => match (argv.get(2), argv.get(3)) {
+            (Some(source_kind), Some(id)) => match crate::state::set_pet(id, source_kind) {
                 Ok(()) => {
-                    println!("pet -> {id}");
+                    println!("pet -> {source_kind}:{id}");
                     0
                 }
                 Err(e) => {
@@ -69,8 +69,11 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                     1
                 }
             },
-            None => {
-                eprintln!("usage: eggs pet <id>");
+            _ => {
+                eprintln!("usage: eggs pet <source> <id>");
+                eprintln!("  e.g. eggs pet builtin kebo-a");
+                eprintln!("       eggs pet local noir-webling");
+                eprintln!("       eggs pet remote <content_id>");
                 2
             }
         },
@@ -90,17 +93,28 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                 0
             }
             Ok(pets) => {
-                let local: Vec<_> = pets.iter().filter(|p| !p.remote).collect();
+                let builtin: Vec<_> = pets.iter().filter(|p| p.builtin).collect();
+                let local: Vec<_> = pets.iter().filter(|p| !p.remote && !p.builtin).collect();
                 let remote: Vec<_> = pets.iter().filter(|p| p.remote).collect();
+                let has_builtin = !builtin.is_empty();
                 let has_local = !local.is_empty();
+                if !builtin.is_empty() {
+                    println!("Built-in");
+                    for p in &builtin {
+                        println!("{}\t{}", p.id, p.display_name);
+                    }
+                }
                 if !local.is_empty() {
+                    if has_builtin {
+                        println!();
+                    }
                     println!("Local");
                     for p in &local {
                         println!("{}\t{}", p.id, p.display_name);
                     }
                 }
                 if !remote.is_empty() {
-                    if has_local {
+                    if has_builtin || has_local {
                         println!();
                     }
                     println!("Remote");
@@ -134,7 +148,7 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
         },
         "status" => match crate::state::read_state() {
             Ok(s) => {
-                println!("pet={} state={}", s.pet, s.state);
+                println!("pet={}:{} state={}", s.pet_source, s.pet, s.state);
                 println!("file={}", crate::state::state_path().display());
                 0
             }
@@ -251,8 +265,8 @@ fn print_help() {
     eprintln!("                        (idle, running-right, running-left,");
     eprintln!("                         waving, jumping, failed, waiting,");
     eprintln!("                         running, review)");
-    eprintln!("  eggs pet <id>         switch active pet (folder name under");
-    eprintln!("                        ~/.eggs/pets/ or ~/.codex/pets/)");
+    eprintln!("  eggs pet <source> <id> switch active pet");
+    eprintln!("                        source: builtin | local | remote");
     eprintln!("  eggs list             list installed pets");
     eprintln!("  eggs install <dir>    copy <dir>/{{pet.json,spritesheet.webp}}");
     eprintln!("                        into ~/.eggs/pets/<id>/");
@@ -523,7 +537,13 @@ fn run_remote_subcommand(argv: &[String]) -> i32 {
             // here so `eggs remote status` still tells the user which pet would be
             // announced on connect.
             let sprite = crate::state::read_state()
-                .map(|s| s.pet)
+                .map(|s| {
+                    if s.pet.is_empty() {
+                        "-".to_string()
+                    } else {
+                        format!("{}:{}", s.pet_source, s.pet)
+                    }
+                })
                 .unwrap_or_default();
             let sprite_display = if sprite.is_empty() {
                 "-"
@@ -616,13 +636,23 @@ fn resolve_pet_for_upload() -> Result<String, i32> {
         }
     }
     eprintln!(
-        "no pet configured. set one with `eggs pet <id>` after installing one under ~/.eggs/pets/"
+        "no pet configured. set one with `eggs pet <source> <id>` after installing one under ~/.eggs/pets/"
     );
     Err(2)
 }
 
 fn run_pet_upload(pet_id: &str, quiet: bool) -> Result<(), i32> {
     let remote = crate::remote::read_remote_config();
+    let pet_source = crate::state::read_state()
+        .ok()
+        .and_then(|s| {
+            if s.pet == pet_id && !s.pet_source.is_empty() {
+                Some(s.pet_source)
+            } else {
+                crate::pet::preferred_source_for_pet(pet_id)
+            }
+        })
+        .unwrap_or_else(|| "local".to_string());
     let device_id = match crate::client::read_client_config() {
         Ok(c) => c.device_id,
         Err(e) => {
@@ -632,29 +662,37 @@ fn run_pet_upload(pet_id: &str, quiet: bool) -> Result<(), i32> {
     };
     if !quiet {
         println!(
-            "uploading pet '{pet_id}' to {} (device_id={device_id})...",
-            remote.server_url
+            "uploading pet '{}:{}' to {} (device_id={device_id})...",
+            pet_source, pet_id, remote.server_url
         );
     }
-    match crate::upload::ensure_pet_uploaded_blocking(&remote.server_url, &device_id, pet_id) {
+    match crate::upload::ensure_pet_uploaded_exact_blocking(
+        &remote.server_url,
+        &device_id,
+        pet_id,
+        &pet_source,
+    ) {
         Ok(outcome) => {
             match outcome.mode {
                 crate::upload::UploadMode::Reused => {
                     if !quiet {
                         println!(
-                            "pet '{pet_id}' already registered for this device (sprite_id={})",
-                            outcome.sprite_id
+                            "pet '{}:{}' already registered for this device (sprite_id={})",
+                            pet_source, pet_id, outcome.sprite_id
                         );
                     }
                 }
                 crate::upload::UploadMode::HashRegistered => {
                     println!(
-                        "pet '{pet_id}' bytes already on server; registered new row (sprite_id={}) -- no upload needed",
-                        outcome.sprite_id
+                        "pet '{}:{}' bytes already on server; registered new row (sprite_id={}) -- no upload needed",
+                        pet_source, pet_id, outcome.sprite_id
                     );
                 }
                 crate::upload::UploadMode::BytesUploaded => {
-                    println!("uploaded pet '{pet_id}' (sprite_id={})", outcome.sprite_id);
+                    println!(
+                        "uploaded pet '{}:{}' (sprite_id={})",
+                        pet_source, pet_id, outcome.sprite_id
+                    );
                 }
             }
             Ok(())

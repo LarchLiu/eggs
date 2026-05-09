@@ -32,6 +32,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
+          "$RESOURCE/pets/**",
+          "$HOME/.eggs/builtin/**",
           "$HOME/.eggs/pets/**",
           "$HOME/.codex/pets/**",
           "$HOME/.eggs/remote/**"
@@ -51,6 +53,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "../pets"
     ]
   }
 }

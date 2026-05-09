@@ -127,23 +127,21 @@ fn sha256_hex(data: &[u8]) -> String {
 
 // ---------- public API ----------
 
-pub async fn ensure_pet_uploaded(
+pub async fn ensure_pet_uploaded_exact(
     server_url: &str,
     device_id: &str,
     pet_id: &str,
+    source_kind: &str,
 ) -> Result<UploadOutcome, UploadError> {
-    // load_pet walks every entry in pet::pets_dirs() and returns the first
-    // matching manifest, so the caller doesn't need to know which root the
-    // pet lives under (~/.eggs/pets vs the legacy ~/.codex/pets).
-    let manifest =
-        pet::load_pet(pet_id).map_err(|_| UploadError::PetNotInstalled(pet_id.to_string()))?;
+    let manifest = pet::load_pet_exact(pet_id, source_kind)
+        .map_err(|_| UploadError::PetNotInstalled(format!("{source_kind}:{pet_id}")))?;
     let sheet_path = manifest
         .spritesheet_abs
         .clone()
-        .ok_or_else(|| UploadError::PetNotInstalled(pet_id.to_string()))?;
+        .ok_or_else(|| UploadError::PetNotInstalled(format!("{source_kind}:{pet_id}")))?;
     let pet_dir = sheet_path
         .parent()
-        .ok_or_else(|| UploadError::PetNotInstalled(pet_id.to_string()))?
+        .ok_or_else(|| UploadError::PetNotInstalled(format!("{source_kind}:{pet_id}")))?
         .to_path_buf();
     let manifest_path = manifest
         .manifest_abs
@@ -151,7 +149,7 @@ pub async fn ensure_pet_uploaded(
         .unwrap_or_else(|| pet_dir.join("pet.json"));
     let manifest_bytes = fs::read(&manifest_path)?;
     if !sheet_path.exists() {
-        return Err(UploadError::PetNotInstalled(pet_id.to_string()));
+        return Err(UploadError::PetNotInstalled(format!("{source_kind}:{pet_id}")));
     }
     let sheet_bytes = fs::read(&sheet_path)?;
 
@@ -174,7 +172,6 @@ pub async fn ensure_pet_uploaded(
         .build()?;
     let endpoint = format!("{}/api/v1/sprites", server_url.trim_end_matches('/'));
 
-    // Phase 1: hash-only POST.
     let phase1 = phase_one_hash_only(
         &client,
         &endpoint,
@@ -189,7 +186,6 @@ pub async fn ensure_pet_uploaded(
         return Ok(outcome);
     }
 
-    // Phase 2: server didn't have the blobs -- send the bytes.
     phase_two_full_upload(
         &client,
         &endpoint,
@@ -322,14 +318,20 @@ async fn phase_two_full_upload(
 
 /// Synchronous wrapper for CLI subcommands that run before the Tauri runtime
 /// exists.
-pub fn ensure_pet_uploaded_blocking(
+pub fn ensure_pet_uploaded_exact_blocking(
     server_url: &str,
     device_id: &str,
     pet_id: &str,
+    source_kind: &str,
 ) -> Result<UploadOutcome, UploadError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| UploadError::Http(format!("tokio runtime init failed: {e}")))?;
-    runtime.block_on(ensure_pet_uploaded(server_url, device_id, pet_id))
+    runtime.block_on(ensure_pet_uploaded_exact(
+        server_url,
+        device_id,
+        pet_id,
+        source_kind,
+    ))
 }

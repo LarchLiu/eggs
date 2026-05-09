@@ -38,7 +38,7 @@ Remote interaction is opt-in. To connect this skill to a separately deployed rem
 
 ```bash
 ./eggs remote server http://localhost:8787
-./eggs remote upload dino
+./eggs remote upload kebo-a
 ./eggs remote
 ./eggs remote status
 ```
@@ -77,10 +77,12 @@ For state changes:
 ./eggs state review
 ```
 
-To switch active pet (folder name under `~/.eggs/pets/` or the legacy `~/.codex/pets/`):
+To switch active pet:
 
 ```bash
-./eggs pet noir-webling
+./eggs pet builtin kebo-a
+./eggs pet local noir-webling
+./eggs pet remote <content_id>
 ```
 
 To install a pet folder (must contain `pet.json` plus a spritesheet) into `~/.eggs/pets/`:
@@ -158,7 +160,7 @@ swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
 - `eggs start` forks a detached background GUI and exits with its PID; `eggs stop` SIGTERMs the running GUI (SIGKILL after 3s); `eggs restart` is stop + start.
 - Re-running `start` is idempotent — if a GUI is already running, it prints `eggs is already running (pid N)` instead of duplicating.
 - Runtime data lives at `~/.eggs/` (Windows: `C:\Users\<n>\.eggs\`). Override via `EGGS_APP_DIR`. State, remote config, device id, PID file, cached peer assets all share that one folder.
-- Pets live at `~/.eggs/pets/<id>/` (each with `pet.json` + a spritesheet). The runtime also still reads `~/.codex/pets/<id>/` for backward compatibility with the legacy Python skill.
+- Pets live at `~/.eggs/pets/<id>/` (each with `pet.json` + a spritesheet). Built-in pets sync into `~/.eggs/builtin/<id>/` at startup. The runtime also still reads `~/.codex/pets/<id>/` for backward compatibility with the legacy Python skill.
 - The transparent always-on-top window is 192x208 (8x9 atlas with 192x208 cells per the Codex pet contract); the user can rescale via the right-click context menu (0.4x / 0.5x / 0.6x / 0.8x / 1.0x). Peer windows on screen mirror the local scale and follow the local pet during drag.
 - Remote interaction is opt-in. Settings live in `~/.eggs/remote.json` (`server_url`, `enabled`, `mode`, `room`, `room_limit`, `session_nonce`), anonymous device identity in `~/.eggs/client.json`, and downloaded peer assets cache to `~/.eggs/remote/<content_id>/` with shared blob files under `~/.eggs/remote/blobs/`.
 - `remote` / `remote on` preserve the saved `mode` and `room` in `remote.json`; `remote random` switches only the mode and keeps any saved room code for later reuse.

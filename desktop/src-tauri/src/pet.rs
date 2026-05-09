@@ -17,7 +17,8 @@
 // not data, and live in the frontend's LAYOUT table.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -71,6 +72,11 @@ pub struct PetManifest {
     /// the active local pet.
     #[serde(rename = "manifestAbs", skip_deserializing)]
     pub manifest_abs: Option<PathBuf>,
+
+    /// Runtime-only source classification so the frontend can distinguish
+    /// hatch-state keys for built-in / local / remote pets that share an id.
+    #[serde(rename = "sourceKind", skip_deserializing)]
+    pub source_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,11 +88,26 @@ pub struct PetInfo {
     pub manifest_path: PathBuf,
     #[serde(default)]
     pub remote: bool,
+    #[serde(default)]
+    pub builtin: bool,
+}
+
+impl PetInfo {
+    pub fn source_kind(&self) -> &'static str {
+        if self.builtin {
+            "builtin"
+        } else if self.remote {
+            "remote"
+        } else {
+            "local"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PetRootKind {
     Installed,
+    Builtin,
     RemoteCache,
 }
 
@@ -103,6 +124,7 @@ pub fn pets_dirs() -> Vec<PathBuf> {
         return vec![PathBuf::from(p)];
     }
     let mut out: Vec<PathBuf> = Vec::new();
+    out.extend(builtin_runtime_dirs());
     if let Some(home) = dirs::home_dir() {
         out.push(home.join(".eggs").join("pets"));
     }
@@ -136,7 +158,7 @@ pub fn list_installed_pets() -> io::Result<Vec<PetInfo>> {
             continue;
         }
         match root.kind {
-            PetRootKind::Installed => {
+            PetRootKind::Installed | PetRootKind::Builtin => {
                 for entry in fs::read_dir(&root.path)? {
                     let entry = entry?;
                     if !entry.file_type()?.is_dir() {
@@ -156,6 +178,7 @@ pub fn list_installed_pets() -> io::Result<Vec<PetInfo>> {
                         display_name: m.display_name,
                         manifest_path,
                         remote: false,
+                        builtin: root.kind == PetRootKind::Builtin,
                     });
                 }
             }
@@ -175,6 +198,7 @@ pub fn list_installed_pets() -> io::Result<Vec<PetInfo>> {
                         display_name: m.display_name,
                         manifest_path,
                         remote: true,
+                        builtin: false,
                     });
                 }
             }
@@ -217,16 +241,131 @@ pub fn load_pet(id: &str) -> io::Result<PetManifest> {
     }))
 }
 
-pub fn first_available_pet() -> Option<String> {
-    list_installed_pets().ok()?.into_iter().next().map(|p| p.id)
+pub fn first_available_pet_info() -> Option<PetInfo> {
+    list_installed_pets()
+        .ok()?
+        .into_iter()
+        .min_by(|a, b| {
+            pet_priority(a)
+                .cmp(&pet_priority(b))
+                .then_with(|| a.id.cmp(&b.id))
+        })
+}
+
+pub fn preferred_source_for_pet(id: &str) -> Option<String> {
+    list_installed_pets()
+        .ok()?
+        .into_iter()
+        .find(|info| info.id == id)
+        .map(|info| info.source_kind().to_string())
+}
+
+pub fn load_pet_exact(id: &str, source_kind: &str) -> io::Result<PetManifest> {
+    let mut last_err: Option<io::Error> = None;
+    for root in pet_roots() {
+        if source_kind_for_root(root.kind) != source_kind {
+            continue;
+        }
+        let pet_dir = root.path.join(id);
+        if !pet_dir.exists() {
+            continue;
+        }
+        let requested_id = if root.kind == PetRootKind::RemoteCache {
+            Some(id)
+        } else {
+            None
+        };
+        match load_manifest_from_dir(&pet_dir, root.kind, requested_id) {
+            Some((m, _)) => return Ok(m),
+            None => {
+                let manifest_path = manifest_path_for(&pet_dir, root.kind);
+                if manifest_path.exists() {
+                    last_err = Some(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid pet manifest: {}", manifest_path.display()),
+                    ));
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("pet '{id}' with source '{source_kind}' not found in any of {:?}", pet_search_dirs()),
+        )
+    }))
+}
+
+fn pet_priority(info: &PetInfo) -> u8 {
+    if info.builtin {
+        0
+    } else if info.remote {
+        2
+    } else {
+        1
+    }
+}
+
+fn source_kind_for_root(kind: PetRootKind) -> &'static str {
+    match kind {
+        PetRootKind::Builtin => "builtin",
+        PetRootKind::Installed => "local",
+        PetRootKind::RemoteCache => "remote",
+    }
+}
+
+pub fn sync_builtin_pets() -> io::Result<()> {
+    let sync_dir = builtin_sync_dir();
+    fs::create_dir_all(&sync_dir)?;
+
+    let mut synced_ids = BTreeSet::new();
+    for root in builtin_source_dirs() {
+        if !root.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some((manifest, manifest_path)) =
+                load_manifest_from_dir(&entry.path(), PetRootKind::Installed, None)
+            else {
+                continue;
+            };
+            if !synced_ids.insert(manifest.id.clone()) {
+                continue;
+            }
+            sync_builtin_pet(&manifest, &manifest_path)?;
+        }
+    }
+
+    for entry in fs::read_dir(&sync_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if synced_ids.contains(&id) {
+            continue;
+        }
+        fs::remove_dir_all(entry.path())?;
+    }
+
+    Ok(())
 }
 
 fn pet_roots() -> Vec<PetRoot> {
+    let builtin_paths: HashSet<PathBuf> = builtin_runtime_dirs().into_iter().collect();
     let mut out: Vec<PetRoot> = pets_dirs()
         .into_iter()
         .map(|path| PetRoot {
+            kind: if builtin_paths.contains(&path) {
+                PetRootKind::Builtin
+            } else {
+                PetRootKind::Installed
+            },
             path,
-            kind: PetRootKind::Installed,
         })
         .collect();
     out.push(PetRoot {
@@ -234,6 +373,67 @@ fn pet_roots() -> Vec<PetRoot> {
         kind: PetRootKind::RemoteCache,
     });
     out
+}
+
+fn builtin_runtime_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    push_unique_path(&mut out, builtin_sync_dir());
+    out
+}
+
+fn builtin_source_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    if let Ok(dir) = std::env::var("EGGS_BUILTIN_PETS_DIR") {
+        let path = PathBuf::from(dir);
+        if !path.as_os_str().is_empty() {
+            out.push(path);
+        }
+        return out;
+    }
+
+    // Dev / local builds: resolve relative to this crate's source tree.
+    // CARGO_MANIFEST_DIR points at desktop/src-tauri, so parent()/pets is
+    // the repo's desktop/pets directory.
+    push_unique_path(
+        &mut out,
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("pets"),
+    );
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            for candidate in [
+                exe_dir.join("../../../pets"),
+                exe_dir.join("../../../../pets"),
+                exe_dir.join("pets"),
+                exe_dir.join("../pets"),
+                exe_dir.join("../../pets"),
+            ] {
+                push_unique_path(&mut out, candidate);
+            }
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        push_unique_path(&mut out, cwd.join("desktop").join("pets"));
+        push_unique_path(&mut out, cwd.join("pets"));
+    }
+
+    out
+}
+
+fn builtin_sync_dir() -> PathBuf {
+    crate::state::app_dir().join("builtin")
+}
+
+fn push_unique_path(out: &mut Vec<PathBuf>, path: PathBuf) {
+    if out.iter().any(|existing| existing == &path) {
+        return;
+    }
+    out.push(path);
 }
 
 fn manifest_path_for(dir: &Path, kind: PetRootKind) -> PathBuf {
@@ -245,7 +445,7 @@ fn manifest_path_for(dir: &Path, kind: PetRootKind) -> PathBuf {
 
 fn manifest_paths_for(dir: &Path, kind: PetRootKind) -> Vec<PathBuf> {
     match kind {
-        PetRootKind::Installed => vec![dir.join("pet.json")],
+        PetRootKind::Installed | PetRootKind::Builtin => vec![dir.join("pet.json")],
         // New remote caches store `pet.json`, but older builds wrote
         // `sprite.json`. Accept both so cached peer sprites show up in the
         // context menu regardless of which version created them.
@@ -271,12 +471,64 @@ fn load_manifest_from_dir(
         if let Some(id) = requested_id {
             manifest.id = id.to_string();
         }
-        manifest.spritesheet_abs = resolve_spritesheet_path(dir, &manifest);
-        manifest.manifest_abs = Some(manifest_path.clone());
+        let resolved = {
+            let sheet_path = resolve_spritesheet_path(dir, &manifest)?;
+            (sheet_path, manifest_path.clone())
+        };
+        manifest.spritesheet_abs = Some(resolved.0);
+        manifest.manifest_abs = Some(resolved.1);
+        manifest.source_kind = Some(source_kind_for_root(kind).to_string());
         manifest.spritesheet_abs.as_ref()?;
         return Some((manifest, manifest_path));
     }
     None
+}
+
+fn sync_builtin_pet(manifest: &PetManifest, manifest_path: &Path) -> io::Result<()> {
+    let dest_dir = builtin_sync_dir().join(&manifest.id);
+    fs::create_dir_all(&dest_dir)?;
+
+    let sheet_src = manifest
+        .spritesheet_abs
+        .clone()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "builtin spritesheet missing"))?;
+    let manifest_dest = dest_dir.join("pet.json");
+    let sheet_name = sheet_src
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "builtin spritesheet missing filename"))?;
+    let sheet_dest = dest_dir.join(sheet_name);
+
+    copy_if_hash_diff(manifest_path, &manifest_dest)?;
+    copy_if_hash_diff(&sheet_src, &sheet_dest)?;
+    Ok(())
+}
+
+fn copy_if_hash_diff(src: &Path, dest: &Path) -> io::Result<()> {
+    let should_copy = if !dest.exists() {
+        true
+    } else {
+        file_sha256_hex(src)? != file_sha256_hex(dest)?
+    };
+    if should_copy {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(src, dest)?;
+    }
+    Ok(())
+}
+
+fn file_sha256_hex(path: &Path) -> io::Result<String> {
+    let bytes = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    use std::fmt::Write;
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    Ok(out)
 }
 
 fn sanitize_manifest_states(manifest: &mut PetManifest) -> bool {

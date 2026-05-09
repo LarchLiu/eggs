@@ -52,7 +52,7 @@ eggs stop
 eggs restart
 eggs status
 eggs list
-eggs pet <id>
+eggs pet <source> <id>
 eggs state <name>
 eggs install <pet-dir>
 eggs hook "<text>"
@@ -94,6 +94,9 @@ Behavior highlights:
 - `remote room <code> [limit]` persists invite room mode and cap.
 - `remote random` switches mode without clearing saved room code.
 - Pet switch in remote mode gates local change on successful upload to keep local/peer view consistent.
+- `eggs pet <source> <id>` targets an exact pet source: `builtin`, `local`, or `remote`.
+- Upload is source-aware (`pet_source + pet`) while peer downloads are content-addressed by `content_id` from server-provided asset URLs.
+- The detailed upload/download protocol is documented in `desktop/README.md` under `Remote Asset Flow`.
 
 ## Codex Hook Integration
 
@@ -114,7 +117,7 @@ So if hooks are enabled in your Codex environment, hook events can be visualized
 
 Runtime data is in `~/.eggs/` (or `EGGS_APP_DIR` override):
 
-- `state.json`: current pet, state, scale, window position
+- `state.json`: current pet, pet source, state, scale, window position
 - `client.json`: device identity
 - `remote.json`: remote config
 - `eggs.pid`: detached GUI pid

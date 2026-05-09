@@ -176,9 +176,16 @@
     let hatchedPets = new Set();
     let hatchRunToken = 0;
     let currentHatchOrder = [];
+    let currentPetSource = "local";
 
     function scaleFromMillis(scaleMillis) {
       return scaleMillis / 1000;
+    }
+
+    function hatchKeyFor(petId, sourceKind = "local") {
+      if (!petId) return "";
+      const source = typeof sourceKind === "string" && sourceKind.trim() ? sourceKind.trim() : "local";
+      return `${source}:${petId}`;
     }
 
     async function loadPet(id) {
@@ -193,14 +200,16 @@
         const { layout, byState, hatchOrder } = buildLayout(manifest);
         pet.setLayout(layout, byState);
         currentHatchOrder = hatchOrder;
+        currentPetSource = (manifest && manifest.sourceKind) || "local";
       } catch (e) {
         console.error(`load_pet(${id}) failed:`, e);
         pet.setLayout(BUILTIN_LAYOUT, Object.fromEntries(BUILTIN_LAYOUT.map((entry) => [entry.state, entry])));
         currentHatchOrder = [];
+        currentPetSource = "local";
       }
     }
 
-    async function runHatchSequence({ petId, fallbackState = "idle", markCompleted = false, syncRemoteFallback = false }) {
+    async function runHatchSequence({ petId, hatchKey, fallbackState = "idle", markCompleted = false, syncRemoteFallback = false }) {
       if (!petId || !Array.isArray(currentHatchOrder) || currentHatchOrder.length === 0) return false;
       hatchRunToken += 1;
       const token = hatchRunToken;
@@ -219,8 +228,8 @@
       if (token !== hatchRunToken) return false;
       if (markCompleted) {
         try {
-          await invoke("mark_pet_hatched", { petId });
-          hatchedPets.add(petId);
+          await invoke("mark_pet_hatched", { hatchKey });
+          hatchedPets.add(hatchKey);
         } catch (e) {
           console.warn("mark_pet_hatched failed", e);
         }
@@ -240,10 +249,11 @@
       return true;
     }
 
-    async function playHatchIfNeeded(petId, fallbackState) {
+    async function playHatchIfNeeded(petId, sourceKind, fallbackState) {
       if (!petId || !Array.isArray(currentHatchOrder) || currentHatchOrder.length === 0) return;
-      if (hatchedPets.has(petId)) return;
-      await runHatchSequence({ petId, fallbackState, markCompleted: true });
+      const hatchKey = hatchKeyFor(petId, sourceKind);
+      if (hatchedPets.has(hatchKey)) return;
+      await runHatchSequence({ petId, hatchKey, fallbackState, markCompleted: true });
     }
 
     // Initial state.json read
@@ -263,7 +273,7 @@
     pet.setScale(scaleFromMillis(current.scale_millis ?? 1000));
     await loadPet(current.pet);
     pet.setState(current.state);
-    await playHatchIfNeeded(current.pet, current.state);
+    await playHatchIfNeeded(current.pet, currentPetSource, current.state);
 
     // list_states() is menu-oriented and does not include hatch states.
 
@@ -282,7 +292,7 @@
         pet.setScale(scaleFromMillis(next.scale_millis));
       }
       if (next.pet !== current.pet) {
-        await playHatchIfNeeded(next.pet, next.state);
+        await playHatchIfNeeded(next.pet, currentPetSource, next.state);
       }
       current = next;
     });

@@ -647,6 +647,7 @@ async fn run_actor(
     let mut peers: HashMap<String, PeerSnapshot> = HashMap::new();
     let mut last_state = state::read_state().unwrap_or_else(|_| state::RuntimeState {
         pet: String::new(),
+        pet_source: "local".to_string(),
         state: "idle".to_string(),
         scale_millis: 1000,
         window_x: None,
@@ -710,6 +711,7 @@ async fn run_actor(
             last_state = cur;
         }
         let current_sprite = last_state.pet.clone();
+        let current_sprite_source = last_state.pet_source.clone();
         {
             let mut queue = outbound_controls()
                 .lock()
@@ -783,8 +785,13 @@ async fn run_actor(
             // Hash-skip upload before connecting. The Go server's WS handshake
             // refuses unknown sprites for the device, so this is mandatory the
             // first time a pet is announced. On the warm path it's one GET.
-            match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &current_sprite)
-                .await
+            match crate::upload::ensure_pet_uploaded_exact(
+                &cfg.server_url,
+                &device_id,
+                &current_sprite,
+                &current_sprite_source,
+            )
+            .await
             {
                 Ok(_) => {
                     last_uploaded_sprite = current_sprite.clone();
@@ -859,8 +866,13 @@ async fn run_actor(
                     continue;
                 }
             };
-            match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &current_sprite)
-                .await
+            match crate::upload::ensure_pet_uploaded_exact(
+                &cfg.server_url,
+                &device_id,
+                &current_sprite,
+                &current_sprite_source,
+            )
+            .await
             {
                 Ok(_) => {
                     last_uploaded_sprite = current_sprite.clone();

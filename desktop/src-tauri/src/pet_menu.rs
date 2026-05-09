@@ -9,6 +9,7 @@ use crate::remote;
 use crate::state::{self, RuntimeState};
 
 const PET_PREFIX: &str = "pet:";
+const PET_HEADER_BUILTIN_ID: &str = "pet-header:builtin";
 const PET_HEADER_LOCAL_ID: &str = "pet-header:local";
 const PET_HEADER_REMOTE_ID: &str = "pet-header:remote";
 const STATE_PREFIX: &str = "state:";
@@ -35,6 +36,10 @@ pub const PET_STATES: [&str; 9] = [
 const HATCH_MENU_STATE: &str = "hatch";
 
 pub const SCALE_PRESETS: [u16; 5] = [400, 500, 600, 800, 1000];
+
+fn pet_menu_id(source_kind: &str, pet_id: &str) -> String {
+    format!("{PET_PREFIX}{source_kind}:{pet_id}")
+}
 
 pub struct PetMenuStore {
     active_menu: Mutex<Option<Menu<tauri::Wry>>>,
@@ -110,11 +115,52 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let has_hatch = has_hatch_states_for_pet(&current.pet);
 
     let pet_submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
-    let (local_pets, remote_pets): (Vec<_>, Vec<_>) =
-        pets.into_iter().partition(|info| !info.remote);
+    let mut builtin_pets = Vec::new();
+    let mut local_pets = Vec::new();
+    let mut remote_pets = Vec::new();
+    for info in pets {
+        if info.remote {
+            remote_pets.push(info);
+        } else if info.builtin {
+            builtin_pets.push(info);
+        } else {
+            local_pets.push(info);
+        }
+    }
+    let has_builtin_pets = !builtin_pets.is_empty();
     let has_local_pets = !local_pets.is_empty();
     let has_remote_pets = !remote_pets.is_empty();
+    let mut inserted_group = false;
+    if has_builtin_pets {
+        let header = MenuItem::with_id(
+            app,
+            PET_HEADER_BUILTIN_ID,
+            "Built-in",
+            false,
+            Option::<&str>::None,
+        )
+        .map_err(|e| e.to_string())?;
+        pet_submenu.append(&header).map_err(|e| e.to_string())?;
+        for info in builtin_pets {
+            let item = CheckMenuItem::with_id(
+                app,
+                pet_menu_id(info.source_kind(), &info.id),
+                info.display_name,
+                true,
+                info.id == current.pet,
+                Option::<&str>::None,
+            )
+            .map_err(|e| e.to_string())?;
+            pet_submenu.append(&item).map_err(|e| e.to_string())?;
+        }
+        inserted_group = true;
+    }
     if has_local_pets {
+        if inserted_group {
+            pet_submenu
+                .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        }
         let header = MenuItem::with_id(
             app,
             PET_HEADER_LOCAL_ID,
@@ -124,20 +170,21 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
         )
         .map_err(|e| e.to_string())?;
         pet_submenu.append(&header).map_err(|e| e.to_string())?;
+        for info in local_pets {
+            let item = CheckMenuItem::with_id(
+                app,
+                pet_menu_id(info.source_kind(), &info.id),
+                info.display_name,
+                true,
+                info.id == current.pet,
+                Option::<&str>::None,
+            )
+            .map_err(|e| e.to_string())?;
+            pet_submenu.append(&item).map_err(|e| e.to_string())?;
+        }
+        inserted_group = true;
     }
-    for info in local_pets {
-        let item = CheckMenuItem::with_id(
-            app,
-            format!("{PET_PREFIX}{}", info.id),
-            info.display_name,
-            true,
-            info.id == current.pet,
-            Option::<&str>::None,
-        )
-        .map_err(|e| e.to_string())?;
-        pet_submenu.append(&item).map_err(|e| e.to_string())?;
-    }
-    if has_local_pets && has_remote_pets {
+    if inserted_group && has_remote_pets {
         pet_submenu
             .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -156,7 +203,7 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     for info in remote_pets {
         let item = CheckMenuItem::with_id(
             app,
-            format!("{PET_PREFIX}{}", info.id),
+            pet_menu_id(info.source_kind(), &info.id),
             info.display_name,
             true,
             info.id == current.pet,
@@ -247,7 +294,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
         return;
     }
 
-    if let Some(pet_id) = id.strip_prefix(PET_PREFIX) {
+    if let Some(encoded) = id.strip_prefix(PET_PREFIX) {
         // Spawn the upload-then-swap on the tokio runtime so the GUI's main
         // event loop stays responsive while ensure_pet_uploaded runs (HTTP
         // upload of a fresh sprite atlas takes a few seconds on slow links;
@@ -255,10 +302,18 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
         // duration). state.json is only written after the upload succeeds,
         // so the local UI keeps showing the previous pet until the swap is
         // confirmed by the server.
+        let Some((source_kind, pet_id)) = encoded.split_once(':') else {
+            eprintln!("pet menu: invalid pet menu id '{encoded}'");
+            return;
+        };
         let id_owned = pet_id.to_string();
+        let source_owned = source_kind.to_string();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = state::set_pet_async(&id_owned).await {
-                eprintln!("pet menu: failed to switch to '{id_owned}': {e}");
+            if let Err(e) = state::set_pet_async(&id_owned, &source_owned).await {
+                eprintln!(
+                    "pet menu: failed to switch to '{}:{}': {e}",
+                    source_owned, id_owned
+                );
             }
         });
         return;
@@ -285,6 +340,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
         }
         let _ = update_state(|current| RuntimeState {
             pet: current.pet,
+            pet_source: current.pet_source,
             state: state_name.to_string(),
             scale_millis: current.scale_millis,
             window_x: current.window_x,
@@ -301,6 +357,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &MenuId) {
             };
             let _ = update_state(|current| RuntimeState {
                 pet: current.pet,
+                pet_source: current.pet_source,
                 state: current.state,
                 scale_millis: clamped,
                 window_x: current.window_x,
@@ -453,7 +510,7 @@ fn spawn_remote_upload() {
     tauri::async_runtime::spawn(async move {
         let cfg = remote::read_remote_config();
         let pet_id = match state::read_state() {
-            Ok(s) if !s.pet.is_empty() => s.pet,
+            Ok(s) if !s.pet.is_empty() => (s.pet, s.pet_source),
             Ok(_) => {
                 eprintln!("remote menu: no active pet to upload");
                 return;
@@ -463,6 +520,7 @@ fn spawn_remote_upload() {
                 return;
             }
         };
+        let (pet_id, pet_source) = pet_id;
         let device_id = match crate::client::read_client_config() {
             Ok(c) => c.device_id,
             Err(e) => {
@@ -470,9 +528,19 @@ fn spawn_remote_upload() {
                 return;
             }
         };
-        match crate::upload::ensure_pet_uploaded(&cfg.server_url, &device_id, &pet_id).await {
-            Ok(_) => eprintln!("remote menu: re-uploaded sprite '{pet_id}'"),
-            Err(e) => eprintln!("remote menu: sprite upload failed for '{pet_id}': {e}"),
+        match crate::upload::ensure_pet_uploaded_exact(
+            &cfg.server_url,
+            &device_id,
+            &pet_id,
+            &pet_source,
+        )
+        .await
+        {
+            Ok(_) => eprintln!("remote menu: re-uploaded sprite '{}:{}'", pet_source, pet_id),
+            Err(e) => eprintln!(
+                "remote menu: sprite upload failed for '{}:{}': {e}",
+                pet_source, pet_id
+            ),
         }
     });
 }

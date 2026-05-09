@@ -64,13 +64,13 @@ fn write_state(state: state::RuntimeState) -> Result<(), String> {
 #[tauri::command]
 fn read_hatched_pets() -> Result<Vec<String>, String> {
     state::read_hatch_state()
-        .map(|s| s.completed)
+        .map(|s| s.completed_keys)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn mark_pet_hatched(pet_id: String) -> Result<(), String> {
-    state::mark_pet_hatched(&pet_id).map_err(|e| e.to_string())
+fn mark_pet_hatched(hatch_key: String) -> Result<(), String> {
+    state::mark_pet_hatched(&hatch_key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -115,6 +115,18 @@ fn disable_remote_before_exit() {
         cfg.session_nonce = 0;
     }) {
         eprintln!("warning: could not disable remote mode during shutdown: {e}");
+    }
+}
+
+fn seed_builtin_pets_dir_env(app: &tauri::AppHandle) {
+    if std::env::var_os("EGGS_BUILTIN_PETS_DIR").is_some() {
+        return;
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let pets_dir = resource_dir.join("pets");
+        if pets_dir.exists() {
+            std::env::set_var("EGGS_BUILTIN_PETS_DIR", pets_dir);
+        }
     }
 }
 
@@ -301,6 +313,11 @@ fn main() {
             send_local_input,
         ])
         .setup(move |app| {
+            seed_builtin_pets_dir_env(app.handle());
+            if let Err(e) = pet::sync_builtin_pets() {
+                eprintln!("warning: could not sync built-in pets: {e}");
+            }
+
             // Best-effort: if launched from a packaged install (.app on macOS,
             // Program Files on Windows), wire `eggs` into a shell-visible
             // location so the user can run subcommands from the terminal

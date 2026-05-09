@@ -18,6 +18,8 @@ use std::collections::BTreeSet;
 pub struct RuntimeState {
     #[serde(default, alias = "sprite")]
     pub pet: String,
+    #[serde(default = "default_pet_source_name")]
+    pub pet_source: String,
     #[serde(default = "default_state_name")]
     pub state: String,
     #[serde(default = "default_scale_millis")]
@@ -30,12 +32,16 @@ pub struct RuntimeState {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct HatchState {
-    #[serde(default)]
-    pub completed: Vec<String>,
+    #[serde(rename = "completedKeys", default)]
+    pub completed_keys: Vec<String>,
 }
 
 fn default_state_name() -> String {
     "idle".to_string()
+}
+
+fn default_pet_source_name() -> String {
+    "local".to_string()
 }
 
 fn default_scale_millis() -> u16 {
@@ -76,6 +82,10 @@ pub fn read_state() -> io::Result<RuntimeState> {
     if s.pet.is_empty() {
         s.pet = default_state().pet;
     }
+    if s.pet_source.is_empty() {
+        s.pet_source = crate::pet::preferred_source_for_pet(&s.pet)
+            .unwrap_or_else(default_pet_source_name);
+    }
     if s.state.is_empty() {
         s.state = default_state().state;
     }
@@ -100,24 +110,24 @@ pub fn read_hatch_state() -> io::Result<HatchState> {
     let text = fs::read_to_string(path)?;
     let mut state: HatchState = serde_json::from_str(&text)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    state.completed = state
-        .completed
+    state.completed_keys = state
+        .completed_keys
         .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
         .collect();
     Ok(state)
 }
 
-pub fn mark_pet_hatched(pet_id: &str) -> io::Result<()> {
-    let pet_id = pet_id.trim();
-    if pet_id.is_empty() {
+pub fn mark_pet_hatched(hatch_key: &str) -> io::Result<()> {
+    let hatch_key = hatch_key.trim();
+    if hatch_key.is_empty() {
         return Ok(());
     }
     let mut state = read_hatch_state().unwrap_or_default();
-    let mut set: BTreeSet<String> = state.completed.into_iter().collect();
-    set.insert(pet_id.to_string());
-    state.completed = set.into_iter().collect();
+    let mut set: BTreeSet<String> = state.completed_keys.into_iter().collect();
+    set.insert(hatch_key.to_string());
+    state.completed_keys = set.into_iter().collect();
     write_hatch_state(&state)
 }
 
@@ -141,7 +151,7 @@ pub fn set_window_position(x: i32, y: i32) -> io::Result<()> {
     write_state(&s)
 }
 
-pub fn set_pet(id: &str) -> io::Result<()> {
+pub fn set_pet(id: &str, source_kind: &str) -> io::Result<()> {
     // If remote is enabled, push the new pet's assets to the backend BEFORE
     // we touch state.json — and refuse the swap if upload fails. The running
     // GUI's state-poller (remote.rs) sends a `{"type":"sprite",...}` ws
@@ -160,14 +170,22 @@ pub fn set_pet(id: &str) -> io::Result<()> {
         let client = crate::client::read_client_config().map_err(|e| {
             io::Error::other(format!("cannot read client.json for remote upload: {e}"))
         })?;
-        crate::upload::ensure_pet_uploaded_blocking(&remote.server_url, &client.device_id, id)
-            .map_err(|e| {
-                io::Error::other(format!("remote sprite upload failed for '{id}': {e}"))
-            })?;
+        crate::upload::ensure_pet_uploaded_exact_blocking(
+            &remote.server_url,
+            &client.device_id,
+            id,
+            source_kind,
+        )
+        .map_err(|e| {
+            io::Error::other(format!(
+                "remote sprite upload failed for '{source_kind}:{id}': {e}"
+            ))
+        })?;
     }
 
     let mut s = read_state().unwrap_or_else(|_| default_state());
     s.pet = id.to_string();
+    s.pet_source = source_kind.to_string();
     write_state(&s)
 }
 
@@ -175,28 +193,45 @@ pub fn set_pet(id: &str) -> io::Result<()> {
 /// tokio runtime (the Tauri main event loop, the remote actor, etc.).
 /// Same upload-before-swap gate as the sync version, but the HTTP upload
 /// runs on the runtime instead of `block_on`-ing the calling thread.
-pub async fn set_pet_async(id: &str) -> io::Result<()> {
+pub async fn set_pet_async(id: &str, source_kind: &str) -> io::Result<()> {
     let remote = crate::remote::read_remote_config();
     if remote.enabled {
         let client = crate::client::read_client_config().map_err(|e| {
             io::Error::other(format!("cannot read client.json for remote upload: {e}"))
         })?;
-        crate::upload::ensure_pet_uploaded(&remote.server_url, &client.device_id, id)
+        crate::upload::ensure_pet_uploaded_exact(
+            &remote.server_url,
+            &client.device_id,
+            id,
+            source_kind,
+        )
             .await
             .map_err(|e| {
-                io::Error::other(format!("remote sprite upload failed for '{id}': {e}"))
+                io::Error::other(format!(
+                    "remote sprite upload failed for '{source_kind}:{id}': {e}"
+                ))
             })?;
     }
 
     let mut s = read_state().unwrap_or_else(|_| default_state());
     s.pet = id.to_string();
+    s.pet_source = source_kind.to_string();
     write_state(&s)
 }
 
 fn default_state() -> RuntimeState {
-    let pet = crate::pet::first_available_pet().unwrap_or_else(|| "noir-webling".to_string());
+    let default_pet = crate::pet::first_available_pet_info();
+    let pet = default_pet
+        .as_ref()
+        .map(|info| info.id.clone())
+        .unwrap_or_else(|| "noir-webling".to_string());
+    let pet_source = default_pet
+        .as_ref()
+        .map(|info| info.source_kind().to_string())
+        .unwrap_or_else(default_pet_source_name);
     RuntimeState {
         pet,
+        pet_source,
         state: default_state_name(),
         scale_millis: default_scale_millis(),
         window_x: None,

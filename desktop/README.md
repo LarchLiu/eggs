@@ -109,7 +109,8 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 
 - `eggs` / `eggs run` — launch foreground GUI (blocks current shell).
 - `eggs start` / `eggs stop` — fork detached GUI / SIGTERM the running one (matches `egg_desktop.py:start_background` / `stop_background`).
-- `eggs pet <id>` — switch active pet; in remote mode also pushes new sprite to the server before broadcasting to peers.
+- `eggs pet <source> <id>` — switch active pet; in remote mode also pushes that exact source-group sprite to the server before broadcasting to peers.
+- `eggs list` and the right-click `Pet` menu include both built-in pets from `desktop/pets/` and user-installed pets.
 - `eggs remote` — enable remote using the saved `remote.json` mode/room; when `mode=room` but `room` is empty it falls back to random matchmaking.
 - `eggs remote room <code> [limit]` — save room mode with an invite code and optional room cap (default `5`), upload the sprite if needed, and ensure the GUI is running. The first client to create a room locks its limit; later joiners cannot change it.
 - `eggs remote random` — switch to random mode without clearing any saved room code from `remote.json`.
@@ -118,7 +119,87 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 - `eggs install <pet-dir>` — copy a pet folder into `~/.eggs/pets/`.
 - `eggs status` / `eggs list`.
 
+Built-in pets live in `desktop/pets/<id>/`. Drop a Codex pet package there during development and it will show up in `eggs list`, the right-click `Pet` menu, and as the default `state.json::pet` whenever that field is empty.
+
+On startup, built-in pets are synced into `~/.eggs/builtin/<id>/` using SHA-256 content comparison, and the runtime loads built-in assets from that synced directory. When `state.json` is first created (or has an empty `pet` field), the default pet is chosen by priority: `Built-in` first, then `Local`, then `Remote`; ties within the same group fall back to lexical `id` order. The active pet in `state.json` is stored as `pet` plus `pet_source`, and CLI switches use `eggs pet <source> <id>` (`builtin`, `local`, or `remote`).
+
 GUI-side runtime mutation (state, pet, scale, …) is forwarded to the running GUI by `tauri-plugin-single-instance`, so CLI subcommands don't need to talk to a separate sidecar process.
+
+## Remote Asset Flow
+
+Remote sync is split into two separate paths:
+
+1. Upload local pet assets to the server so peers can reference them.
+2. Download peer asset URLs from the server into a local content-addressed cache.
+
+### Upload path
+
+The active local pet is resolved from `state.json` as `pet_source + pet`, not just by `id`. That means `eggs pet builtin kebo-a` and `eggs pet local kebo-a` can upload different asset directories even when they share the same pet id.
+
+Upload uses `POST /api/v1/sprites` in two phases:
+
+1. Hash-only probe:
+   - form fields: `device_id`, `sprite_name`, `display_name`, `sprite_hash`, `json_hash`
+   - no file parts yet
+2. Full upload only when needed:
+   - same fields as above
+   - multipart file parts: `sprite` and `json`
+
+Server responses:
+
+- `200 OK`: this `(device_id, sprite_name, hashes)` row already exists
+- `201 Created`: blobs already existed server-side; server registers a fresh row for this device
+- `404 {"missing":[...]}`: client must retry with bytes
+
+The server stores the uploaded metadata as a sprite record with fields including:
+
+- `id`
+- `content_id`
+- `owner_device_id`
+- `name`
+- `display_name`
+- `sprite_url`
+- `json_url`
+- `config_url`
+- `sprite_hash`
+- `json_hash`
+
+`content_id` is derived from the uploaded hashes and becomes the stable asset identifier used by peers.
+
+### Download path
+
+After both peers connect to `/ws`, the server does not push binary data through WebSocket. Instead it broadcasts peer presence messages such as:
+
+- `room_snapshot`
+- `peer_joined`
+- `peer_state`
+- `peer_sprite_changed`
+
+Each message includes:
+
+- `device_id`
+- optional `state`
+- `sprite` object
+
+The client consumes these sprite fields:
+
+- `sprite.name`
+- `sprite.sprite_url`
+- `sprite.json_url`
+- `sprite.config_url`
+
+The desktop extracts `<content_id>` from URLs like:
+
+- `/assets/<content_id>/sprite.webp`
+- `/assets/<content_id>/sprite.json`
+
+and caches the peer assets under:
+
+- `~/.eggs/remote/<content_id>/pet.json`
+- `~/.eggs/remote/<content_id>/spritesheet.webp` (or `.png`)
+- `~/.eggs/remote/<content_id>/config.json`
+
+If those files already exist locally, download is skipped. So peer asset reuse is keyed by `content_id`, not by pet name.
 
 ## Data directory
 
@@ -131,7 +212,7 @@ Override with the `EGGS_APP_DIR` environment variable (handy for tests).
 
 | File | Purpose |
 |---|---|
-| `state.json` | Current `pet`, animation `state`, `scale_millis` |
+| `state.json` | Current `pet`, `pet_source`, animation `state`, `scale_millis` |
 | `client.json` | Anonymous device id (auto-generated UUID v4) |
 | `remote.json` | Server URL, enabled flag, saved mode (random / room), optional saved room code, saved `room_limit`, reconnect `session_nonce` |
 | `eggs.pid` | Running GUI's PID, used by `eggs stop` |
