@@ -82,12 +82,12 @@ enum ImageFormat: String {
         "spritesheet.\(rawValue)"
     }
 
-    var type: UTType {
+    var displayName: String {
         switch self {
         case .png:
-            return .png
+            return "PNG"
         case .webp:
-            return .webP
+            return "WebP"
         }
     }
 }
@@ -108,6 +108,25 @@ struct PositionedFrame {
     let url: URL
     let row: Int
     let column: Int
+}
+
+struct OutputFrameMetadata: Encodable {
+    let index: Int
+    let row: Int
+    let column: Int
+    let filename: String
+}
+
+struct OutputMetadata: Encodable {
+    let image: String
+    let frameWidth: Int
+    let frameHeight: Int
+    let columns: Int
+    let rows: Int
+    let sourceColumns: Int
+    let sourceRows: Int
+    let frameCount: Int
+    let frames: [OutputFrameMetadata]
 }
 
 struct PetManifest: Encodable {
@@ -243,8 +262,11 @@ func loadImage(at path: String) throws -> RGBAImage {
 }
 
 func saveImage(_ image: RGBAImage, to path: String, format: ImageFormat) throws {
+    guard format == .png else {
+        throw NSError(domain: "ResizeCropFrames", code: 2, userInfo: [NSLocalizedDescriptionKey: "saveImage currently only supports PNG output directly."])
+    }
     let url = URL(fileURLWithPath: path)
-    guard let destination = CGImageDestinationCreateWithURL(url as CFURL, format.type.identifier as CFString, 1, nil) else {
+    guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
         throw NSError(domain: "ResizeCropFrames", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to create image destination at \(path)"])
     }
     CGImageDestinationAddImage(destination, image.toCGImage(), nil)
@@ -384,30 +406,52 @@ func filenamePrefix(from inputDir: URL, frameFiles: [URL]) -> String {
     return name
 }
 
-func copyReplacingItem(from source: URL, to destination: URL) throws {
-    let sourcePath = source.standardizedFileURL.path
-    let destinationPath = destination.standardizedFileURL.path
-    guard sourcePath != destinationPath else { return }
-    if FileManager.default.fileExists(atPath: destination.path) {
-        try FileManager.default.removeItem(at: destination)
-    }
-    try FileManager.default.copyItem(at: source, to: destination)
-}
-
 func capitalizeFirstLetter(_ text: String) -> String {
     guard let first = text.first else { return text }
     return String(first).uppercased() + text.dropFirst()
 }
 
-func installPetAssets(petDirName: String, sheetURL: URL, manifestURL: URL) throws -> URL {
-    let installDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".eggs")
-        .appendingPathComponent("pets")
-        .appendingPathComponent(petDirName)
-    try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
-    try copyReplacingItem(from: sheetURL, to: installDir.appendingPathComponent(sheetURL.lastPathComponent))
-    try copyReplacingItem(from: manifestURL, to: installDir.appendingPathComponent("pet.json"))
-    return installDir
+func toolExists(named tool: String) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["bash", "-lc", "command -v \(tool) >/dev/null 2>&1"]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
+    }
+}
+
+func runCWebP(inputPNG: URL, outputWebP: URL) throws {
+    guard toolExists(named: "cwebp") else {
+        throw NSError(
+            domain: "ResizeCropFrames",
+            code: 30,
+            userInfo: [NSLocalizedDescriptionKey: "WebP export requires 'cwebp', but it was not found in PATH.\nInstall it with:\n  brew install webp\nThen run the command again, or use '--format png'."]
+        )
+    }
+
+    let process = Process()
+    let errorPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["cwebp", "-lossless", inputPNG.path, "-o", outputWebP.path]
+    process.standardError = errorPipe
+    process.standardOutput = Pipe()
+    try process.run()
+    process.waitUntilExit()
+
+    if process.terminationStatus != 0 {
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorText = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = (errorText?.isEmpty == false) ? "\n\(errorText!)" : ""
+        throw NSError(
+            domain: "ResizeCropFrames",
+            code: 31,
+            userInfo: [NSLocalizedDescriptionKey: "cwebp failed to generate \(outputWebP.lastPathComponent).\(detail)"]
+        )
+    }
 }
 
 func parseFrameCoordinates(from filename: String) -> (row: Int, column: Int)? {
@@ -527,20 +571,26 @@ do {
     let rowDigits = max(2, String(max(0, sourceRows - 1)).count)
     let columnDigits = max(2, String(max(0, options.columns - 1)).count)
     var processedFrames: [(position: PositionedFrame, image: RGBAImage)] = []
+    var outputMetadataFrames: [OutputFrameMetadata] = []
     for frame in positionedFrames {
         let source = try loadImage(at: frame.url.path)
         let processed = scaleAndCenterCrop(source, targetWidth: options.frameWidth, targetHeight: options.frameHeight)
-        let outputURL = outputDir.appendingPathComponent(
-            frameFilename(
-                prefix: prefix,
-                row: frame.row,
-                column: frame.column,
-                rowDigits: rowDigits,
-                columnDigits: columnDigits
-            )
+        let outputFilename = frameFilename(
+            prefix: prefix,
+            row: frame.row,
+            column: frame.column,
+            rowDigits: rowDigits,
+            columnDigits: columnDigits
         )
+        let outputURL = outputDir.appendingPathComponent(outputFilename)
         try saveImage(processed, to: outputURL.path, format: .png)
         processedFrames.append((frame, processed))
+        outputMetadataFrames.append(OutputFrameMetadata(
+            index: frame.row * options.columns + frame.column,
+            row: frame.row,
+            column: frame.column,
+            filename: outputFilename
+        ))
     }
 
     let sheet = combinePositionedFrames(
@@ -550,8 +600,18 @@ do {
         frameWidth: options.frameWidth,
         frameHeight: options.frameHeight
     )
-    let sheetURL = outputDir.appendingPathComponent(options.imageFormat.fileName)
-    try saveImage(sheet, to: sheetURL.path, format: options.imageFormat)
+    let pngSheetURL = outputDir.appendingPathComponent(ImageFormat.png.fileName)
+    try saveImage(sheet, to: pngSheetURL.path, format: .png)
+    let sheetURL: URL
+    switch options.imageFormat {
+    case .png:
+        sheetURL = pngSheetURL
+    case .webp:
+        let webpURL = outputDir.appendingPathComponent(ImageFormat.webp.fileName)
+        try runCWebP(inputPNG: pngSheetURL, outputWebP: webpURL)
+        try? FileManager.default.removeItem(at: pngSheetURL)
+        sheetURL = webpURL
+    }
 
     let petId = outputDir.lastPathComponent
     let manifest = PetManifest(
@@ -562,18 +622,30 @@ do {
     )
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let metadata = OutputMetadata(
+        image: options.imageFormat.fileName,
+        frameWidth: options.frameWidth,
+        frameHeight: options.frameHeight,
+        columns: options.columns,
+        rows: sourceRows,
+        sourceColumns: sourceColumns,
+        sourceRows: sourceRows,
+        frameCount: outputMetadataFrames.count,
+        frames: outputMetadataFrames
+    )
+    let metadataURL = outputDir.appendingPathComponent("metadata.json")
+    try encoder.encode(metadata).write(to: metadataURL)
     let manifestURL = outputDir.appendingPathComponent("pet.json")
     try encoder.encode(manifest).write(to: manifestURL)
-    let installDir = try installPetAssets(petDirName: petId, sheetURL: sheetURL, manifestURL: manifestURL)
 
     print("Processed \(processedFrames.count) frames")
     print("Frames dir: \(outputDir.path)")
     print("Sheet: \(sheetURL.path)")
+    print("Metadata: \(metadataURL.path)")
     print("Manifest: \(manifestURL.path)")
     print("Frame size: \(options.frameWidth)x\(options.frameHeight)")
     print("Source grid: \(sourceColumns)x\(sourceRows)")
     print("Sheet grid: \(options.columns)x\(sourceRows)")
-    print("Installed pet: \(installDir.path)")
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)

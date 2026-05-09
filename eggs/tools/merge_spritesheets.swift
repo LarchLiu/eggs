@@ -126,13 +126,29 @@ struct InputSheet {
     let image: RGBAImage
 }
 
+struct PetManifest: Encodable {
+    let id: String
+    let displayName: String
+    let description: String
+    let spritesheetPath: String
+}
+
+enum ImageFormat: String {
+    case png
+    case webp
+
+    var fileExtension: String {
+        rawValue
+    }
+}
+
 func usage() -> String {
     """
     Usage:
-      merge_spritesheets <output-dir> [--name <name>] <metadata.json> [metadata.json ...]
+      merge_spritesheets <output-dir> [--format <png|webp>] <metadata.json> [metadata.json ...]
 
     Merges already-extracted regular-grid spritesheets vertically into one sheet.
-    If --name is omitted, writes <output-dir-name>_spritesheet.png/json.
+    Writes `spritesheet.png`/`.webp` and `metadata.json`.
     Sources may have different row counts and frame sizes; frames are centered into
     a common max frame size. All sources must have the same column count.
     """
@@ -158,24 +174,52 @@ func savePNG(_ image: RGBAImage, to path: String) throws {
     }
 }
 
-func copyReplacingItem(from source: URL, to destination: URL) throws {
-    let sourcePath = source.standardizedFileURL.path
-    let destinationPath = destination.standardizedFileURL.path
-    guard sourcePath != destinationPath else { return }
-    if FileManager.default.fileExists(atPath: destination.path) {
-        try FileManager.default.removeItem(at: destination)
+func toolExists(named tool: String) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["bash", "-lc", "command -v \(tool) >/dev/null 2>&1"]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
     }
-    try FileManager.default.copyItem(at: source, to: destination)
 }
 
-func installSpriteAssets(imageURL: URL, metadataURL: URL) throws -> URL {
-    let installDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex")
-        .appendingPathComponent("eggs")
-    try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
-    try copyReplacingItem(from: imageURL, to: installDir.appendingPathComponent(imageURL.lastPathComponent))
-    try copyReplacingItem(from: metadataURL, to: installDir.appendingPathComponent(metadataURL.lastPathComponent))
-    return installDir
+func runCWebP(inputPNG: URL, outputWebP: URL) throws {
+    guard toolExists(named: "cwebp") else {
+        throw NSError(
+            domain: "MergeSpritesheets",
+            code: 30,
+            userInfo: [NSLocalizedDescriptionKey: "WebP export requires 'cwebp', but it was not found in PATH.\nInstall it with:\n  brew install webp\nThen run the command again, or use '--format png'."]
+        )
+    }
+
+    let process = Process()
+    let errorPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["cwebp", "-lossless", inputPNG.path, "-o", outputWebP.path]
+    process.standardError = errorPipe
+    process.standardOutput = Pipe()
+    try process.run()
+    process.waitUntilExit()
+
+    if process.terminationStatus != 0 {
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorText = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = (errorText?.isEmpty == false) ? "\n\(errorText!)" : ""
+        throw NSError(
+            domain: "MergeSpritesheets",
+            code: 31,
+            userInfo: [NSLocalizedDescriptionKey: "cwebp failed to generate \(outputWebP.lastPathComponent).\(detail)"]
+        )
+    }
+}
+
+func capitalizeFirstLetter(_ text: String) -> String {
+    guard let first = text.first else { return text }
+    return String(first).uppercased() + text.dropFirst()
 }
 
 func crop(_ image: RGBAImage, rect: Rect) -> RGBAImage {
@@ -187,6 +231,21 @@ func crop(_ image: RGBAImage, rect: Rect) -> RGBAImage {
         }
     }
     return out
+}
+
+func loadFrameImage(baseDir: URL, sourceFrame: SourceFrame, fallbackSheet: RGBAImage, frameWidth: Int, frameHeight: Int) throws -> RGBAImage {
+    let frameURL = baseDir.appendingPathComponent(sourceFrame.filename)
+    if FileManager.default.fileExists(atPath: frameURL.path) {
+        return try loadImage(at: frameURL.path)
+    }
+
+    let sourceRect = Rect(
+        x: sourceFrame.column * frameWidth,
+        y: sourceFrame.row * frameHeight,
+        width: frameWidth,
+        height: frameHeight
+    )
+    return crop(fallbackSheet, rect: sourceRect)
 }
 
 func paste(_ source: RGBAImage, into target: inout RGBAImage, x offsetX: Int, y offsetY: Int) {
@@ -210,23 +269,35 @@ func shifted(_ rect: Rect?, x dx: Int, y dy: Int) -> Rect? {
 
 let args = CommandLine.arguments
 do {
+    if args.contains("--help") || args.contains("-h") {
+        print(usage())
+        exit(0)
+    }
+
     guard args.count >= 3 else {
         throw NSError(domain: "MergeSpritesheets", code: 4, userInfo: [NSLocalizedDescriptionKey: usage()])
     }
 
     let outputDir = URL(fileURLWithPath: args[1])
-    let defaultNameBase = outputDir.lastPathComponent.isEmpty ? "combined" : outputDir.lastPathComponent
-    let spriteName: String
-    let metadataPaths: [String]
-    if args[2] == "--name" {
-        guard args.count >= 5 else {
-            throw NSError(domain: "MergeSpritesheets", code: 7, userInfo: [NSLocalizedDescriptionKey: usage()])
+    var imageFormat = ImageFormat.png
+    var metadataPaths: [String] = []
+
+    var i = 2
+    while i < args.count {
+        let option = args[i]
+        if option == "--format" {
+            guard i + 1 < args.count, let parsed = ImageFormat(rawValue: args[i + 1].lowercased()) else {
+                throw NSError(domain: "MergeSpritesheets", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format expects 'png' or 'webp'."])
+            }
+            imageFormat = parsed
+            i += 2
+        } else {
+            metadataPaths.append(option)
+            i += 1
         }
-        spriteName = args[3]
-        metadataPaths = Array(args.dropFirst(4))
-    } else {
-        spriteName = "\(defaultNameBase)_spritesheet"
-        metadataPaths = Array(args.dropFirst(2))
+    }
+    guard !metadataPaths.isEmpty else {
+        throw NSError(domain: "MergeSpritesheets", code: 5, userInfo: [NSLocalizedDescriptionKey: "No input sheets provided."])
     }
     try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
 
@@ -263,13 +334,13 @@ do {
         let dx = (frameWidth - input.metadata.frameWidth) / 2
         let dy = (frameHeight - input.metadata.frameHeight) / 2
         for sourceFrame in input.metadata.frames.sorted(by: { $0.index < $1.index }) {
-            let sourceRect = Rect(
-                x: sourceFrame.column * input.metadata.frameWidth,
-                y: sourceFrame.row * input.metadata.frameHeight,
-                width: input.metadata.frameWidth,
-                height: input.metadata.frameHeight
+            let frame = try loadFrameImage(
+                baseDir: input.baseDir,
+                sourceFrame: sourceFrame,
+                fallbackSheet: input.image,
+                frameWidth: input.metadata.frameWidth,
+                frameHeight: input.metadata.frameHeight
             )
-            let frame = crop(input.image, rect: sourceRect)
             let outCol = sourceFrame.column
             let outRow = rowOffset + sourceFrame.row
             paste(frame, into: &output, x: outCol * frameWidth + dx, y: outRow * frameHeight + dy)
@@ -290,11 +361,25 @@ do {
         rowOffset += input.metadata.rows
     }
 
-    let imageName = "\(spriteName).png"
-    let jsonName = "\(spriteName).json"
-    let imageURL = outputDir.appendingPathComponent(imageName)
+    let pngImageName = "spritesheet.png"
+    let jsonName = "metadata.json"
+    let pngImageURL = outputDir.appendingPathComponent(pngImageName)
     let jsonURL = outputDir.appendingPathComponent(jsonName)
-    try savePNG(output, to: imageURL.path)
+    try savePNG(output, to: pngImageURL.path)
+    let imageURL: URL
+    let imageName: String
+    switch imageFormat {
+    case .png:
+        imageURL = pngImageURL
+        imageName = pngImageName
+    case .webp:
+        let webpName = "spritesheet.webp"
+        let webpURL = outputDir.appendingPathComponent(webpName)
+        try runCWebP(inputPNG: pngImageURL, outputWebP: webpURL)
+        try? FileManager.default.removeItem(at: pngImageURL)
+        imageURL = webpURL
+        imageName = webpName
+    }
 
     let metadata = MergedMetadata(
         image: imageName,
@@ -309,15 +394,22 @@ do {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(metadata).write(to: jsonURL)
-    let installDir = try installSpriteAssets(imageURL: imageURL, metadataURL: jsonURL)
+    let petId = outputDir.lastPathComponent
+    let petManifest = PetManifest(
+        id: petId,
+        displayName: capitalizeFirstLetter(petId),
+        description: "",
+        spritesheetPath: imageName
+    )
+    let petJSONURL = outputDir.appendingPathComponent("pet.json")
+    try encoder.encode(petManifest).write(to: petJSONURL)
 
     print("Merged \(inputs.count) sheets")
     print("Grid: \(columns)x\(rows)")
     print("Frame size: \(frameWidth)x\(frameHeight)")
     print("Sprite sheet: \(imageURL.path)")
     print("Metadata: \(jsonURL.path)")
-    print("Installed: \(installDir.appendingPathComponent(imageName).path)")
-    print("Installed metadata: \(installDir.appendingPathComponent(jsonName).path)")
+    print("Pet manifest: \(petJSONURL.path)")
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)

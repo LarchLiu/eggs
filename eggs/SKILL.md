@@ -99,56 +99,40 @@ To uninstall the CLI shim that the GUI's first launch placed in `/usr/local/bin/
 
 ## Sprite Tools
 
-Use the bundled Swift tools in `tools/` when asked to process, extract, validate, or merge desktop companion sprite sheets. When tools are run with `--name <sprite>`, they write `<sprite>.png` and `<sprite>.json` to the requested output directory and also install copies to `~/.eggs/<sprite>.png` and `~/.eggs/<sprite>.json`. If extraction is run without `--name`, use the input image stem and write `<input-name>_spritesheet.png/json`.
+The bundled Swift tools in `tools/` currently support macOS only. They rely on Apple frameworks such as CoreGraphics and ImageIO, and WebP export uses `cwebp`.
+Use them when asked to process, extract, validate, or merge desktop companion sprite sheets. They write a `spritesheet.png` or `spritesheet.webp`, `metadata.json`, and `pet.json` into the requested output directory.
 
-Build tools into a temporary location instead of committing platform-specific binaries:
+Build tools into `~/.eggs/bin/`:
 
 ```bash
-mkdir -p .swift-module-cache
-CLANG_MODULE_CACHE_PATH="$PWD/.swift-module-cache" \
-swiftc -module-cache-path "$PWD/.swift-module-cache" \
-  eggs/tools/extract_sprite.swift \
-  -o /tmp/extract_sprite
+./eggs/tools/build_tools.sh
 ```
 
 Extract a bordered grid:
 
 ```bash
-/tmp/extract_sprite <input.png> <output-dir> --prefix <name>
+~/.eggs/bin/extract_sprite <input.png> <output-dir>
 ```
 
 Extract a borderless regular grid:
 
 ```bash
-/tmp/extract_sprite <input.png> <output-dir> \
+~/.eggs/bin/extract_sprite <input.png> <output-dir> \
   --grid uniform \
   --columns <n> \
-  --rows <n> \
-  --prefix <name>
+  --rows <n>
 ```
 
 Force multiple source sheets into a common frame canvas:
 
 ```bash
-/tmp/extract_sprite <input.png> <output-dir> --frame-size 251 --prefix <name>
+~/.eggs/bin/extract_sprite <input.png> <output-dir> --frame-size 251
 ```
 
-Merge extracted sheets vertically:
+Merge extracted sheets vertically. The merge tool first tries to read each frame from `frames[].filename`; if a frame PNG is missing, it falls back to cropping from the source spritesheet:
 
 ```bash
-CLANG_MODULE_CACHE_PATH="$PWD/.swift-module-cache" \
-swiftc -module-cache-path "$PWD/.swift-module-cache" \
-  eggs/tools/merge_spritesheets.swift \
-  -o /tmp/merge_spritesheets
-
-/tmp/merge_spritesheets <output-dir> [--name <sprite>] <sheet-a.json> <sheet-b.json>
-```
-
-Validation helpers:
-
-```bash
-swiftc eggs/tools/check_sprite.swift -o /tmp/check_sprite
-swiftc eggs/tools/bounds_sprite.swift -o /tmp/bounds_sprite
+~/.eggs/bin/merge_spritesheets <output-dir> <sheet-a.json> <sheet-b.json>
 ```
 
 ## Runtime Behavior

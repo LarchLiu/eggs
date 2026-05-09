@@ -120,19 +120,34 @@ enum GridMode: String {
     case uniform
 }
 
+enum ImageFormat: String {
+    case png
+    case webp
+
+    var fileExtension: String {
+        rawValue
+    }
+}
+
 struct ToolOptions {
     let inputPath: String
     let outputDir: String
-    let spriteName: String
     let columns: Int?
     let rows: Int?
     let frameWidth: Int?
     let frameHeight: Int?
-    let prefix: String
     let borderThreshold: Double
     let trimPadding: Int
     let alignment: AlignmentMode
     let gridMode: GridMode
+    let imageFormat: ImageFormat
+}
+
+struct PetManifest: Encodable {
+    let id: String
+    let displayName: String
+    let description: String
+    let spritesheetPath: String
 }
 
 func usage() -> String {
@@ -144,13 +159,11 @@ func usage() -> String {
       --columns <n>              Override detected column count.
       --rows <n>                 Override detected row count.
       --frame-size <w>x<h>|<n>   Override output frame canvas size.
-      --name <name>              Output sprite name. Writes <name>.png and <name>.json.
-                                 Defaults to <input-name>_spritesheet.
-      --prefix <name>            Individual frame filename prefix. Defaults to output directory name.
       --border-threshold <n>     Border detection threshold, 0.0-1.0. Default: 0.75.
       --padding <px>             Pixels to trim inward from detected cell borders. Default: 5.
       --align <mode>             preserve-cell or center-content. Default: preserve-cell.
       --grid <mode>              auto, bordered, or uniform. Default: auto.
+      --format <fmt>             Output image format: png or webp. Default: png.
       --help                     Show this help.
     """
 }
@@ -193,12 +206,11 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
     var rows: Int? = nil
     var frameWidth: Int? = nil
     var frameHeight: Int? = nil
-    var spriteName: String? = nil
-    var prefix: String? = nil
     var borderThreshold = 0.75
     var trimPadding = 5
     var alignment = AlignmentMode.preserveCell
     var gridMode = GridMode.auto
+    var imageFormat = ImageFormat.png
 
     var i = 3
     while i < args.count {
@@ -221,12 +233,6 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
             let size = try parseFrameSize(try requireValue())
             frameWidth = size.width
             frameHeight = size.height
-            i += 2
-        case "--name":
-            spriteName = try requireValue()
-            i += 2
-        case "--prefix":
-            prefix = try requireValue()
             i += 2
         case "--border-threshold":
             let value = try requireValue()
@@ -252,30 +258,30 @@ func parseOptions(_ args: [String]) throws -> ToolOptions {
             }
             gridMode = parsed
             i += 2
+        case "--format":
+            let value = try requireValue()
+            guard let parsed = ImageFormat(rawValue: value.lowercased()) else {
+                throw NSError(domain: "SpriteExtract", code: 21, userInfo: [NSLocalizedDescriptionKey: "--format expects 'png' or 'webp'."])
+            }
+            imageFormat = parsed
+            i += 2
         default:
             throw NSError(domain: "SpriteExtract", code: 15, userInfo: [NSLocalizedDescriptionKey: "Unknown option '\(option)'.\n\(usage())"])
         }
     }
 
-    let inputStem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
-    let defaultSpriteName = inputStem.isEmpty ? "spritesheet" : "\(inputStem)_spritesheet"
-    let defaultPrefix = URL(fileURLWithPath: outputDir).lastPathComponent.isEmpty
-        ? "sprites"
-        : URL(fileURLWithPath: outputDir).lastPathComponent
-
     return ToolOptions(
         inputPath: inputPath,
         outputDir: outputDir,
-        spriteName: spriteName ?? defaultSpriteName,
         columns: columns,
         rows: rows,
         frameWidth: frameWidth,
         frameHeight: frameHeight,
-        prefix: prefix ?? defaultPrefix,
         borderThreshold: borderThreshold,
         trimPadding: trimPadding,
         alignment: alignment,
-        gridMode: gridMode
+        gridMode: gridMode,
+        imageFormat: imageFormat
     )
 }
 
@@ -302,24 +308,52 @@ func savePNG(_ image: RGBAImage, to path: String) throws {
     }
 }
 
-func copyReplacingItem(from source: URL, to destination: URL) throws {
-    let sourcePath = source.standardizedFileURL.path
-    let destinationPath = destination.standardizedFileURL.path
-    guard sourcePath != destinationPath else { return }
-    if FileManager.default.fileExists(atPath: destination.path) {
-        try FileManager.default.removeItem(at: destination)
+func toolExists(named tool: String) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["bash", "-lc", "command -v \(tool) >/dev/null 2>&1"]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
     }
-    try FileManager.default.copyItem(at: source, to: destination)
 }
 
-func installSpriteAssets(imageURL: URL, metadataURL: URL) throws -> URL {
-    let installDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex")
-        .appendingPathComponent("eggs")
-    try FileManager.default.createDirectory(at: installDir, withIntermediateDirectories: true)
-    try copyReplacingItem(from: imageURL, to: installDir.appendingPathComponent(imageURL.lastPathComponent))
-    try copyReplacingItem(from: metadataURL, to: installDir.appendingPathComponent(metadataURL.lastPathComponent))
-    return installDir
+func runCWebP(inputPNG: URL, outputWebP: URL) throws {
+    guard toolExists(named: "cwebp") else {
+        throw NSError(
+            domain: "SpriteExtract",
+            code: 30,
+            userInfo: [NSLocalizedDescriptionKey: "WebP export requires 'cwebp', but it was not found in PATH.\nInstall it with:\n  brew install webp\nThen run the command again, or use '--format png'."]
+        )
+    }
+
+    let process = Process()
+    let errorPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["cwebp", "-lossless", inputPNG.path, "-o", outputWebP.path]
+    process.standardError = errorPipe
+    process.standardOutput = Pipe()
+    try process.run()
+    process.waitUntilExit()
+
+    if process.terminationStatus != 0 {
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorText = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = (errorText?.isEmpty == false) ? "\n\(errorText!)" : ""
+        throw NSError(
+            domain: "SpriteExtract",
+            code: 31,
+            userInfo: [NSLocalizedDescriptionKey: "cwebp failed to generate \(outputWebP.lastPathComponent).\(detail)"]
+        )
+    }
+}
+
+func capitalizeFirstLetter(_ text: String) -> String {
+    guard let first = text.first else { return text }
+    return String(first).uppercased() + text.dropFirst()
 }
 
 func darkPixelRatioForColumn(_ image: RGBAImage, x: Int) -> Double {
@@ -807,7 +841,7 @@ do {
                 placed = padToCanvasCenteredOnContent(transparentFrame, width: frameWidth, height: frameHeight)
             }
             let filename = frameFilename(
-                prefix: options.prefix,
+                prefix: "sprite",
                 row: row,
                 column: col,
                 rowDigits: rowDigits,
@@ -840,9 +874,23 @@ do {
     }
 
     let sheet = combineFrames(frames, columns: columns, rows: rows)
-    let sheetName = "\(options.spriteName).png"
-    let sheetURL = URL(fileURLWithPath: outputDir + "/" + sheetName)
-    try savePNG(sheet, to: sheetURL.path)
+    let pngSheetName = "spritesheet.png"
+    let pngSheetURL = URL(fileURLWithPath: outputDir + "/" + pngSheetName)
+    try savePNG(sheet, to: pngSheetURL.path)
+    let sheetURL: URL
+    let sheetName: String
+    switch options.imageFormat {
+    case .png:
+        sheetURL = pngSheetURL
+        sheetName = pngSheetName
+    case .webp:
+        let webpName = "spritesheet.webp"
+        let webpURL = URL(fileURLWithPath: outputDir + "/" + webpName)
+        try runCWebP(inputPNG: pngSheetURL, outputWebP: webpURL)
+        try? FileManager.default.removeItem(at: pngSheetURL)
+        sheetURL = webpURL
+        sheetName = webpName
+    }
 
     let meta = SpriteSheetMetadata(
         image: sheetName,
@@ -856,18 +904,26 @@ do {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let json = try encoder.encode(meta)
-    let jsonName = "\(options.spriteName).json"
+    let jsonName = "metadata.json"
     let jsonURL = URL(fileURLWithPath: outputDir + "/" + jsonName)
     try json.write(to: jsonURL)
-    let installDir = try installSpriteAssets(imageURL: sheetURL, metadataURL: jsonURL)
+    let petId = URL(fileURLWithPath: outputDir).lastPathComponent
+    let petManifest = PetManifest(
+        id: petId,
+        displayName: capitalizeFirstLetter(petId),
+        description: "",
+        spritesheetPath: sheetName
+    )
+    let petJSON = try encoder.encode(petManifest)
+    let petJSONURL = URL(fileURLWithPath: outputDir + "/pet.json")
+    try petJSON.write(to: petJSONURL)
 
     print("Created \(frames.count) frames in \(framesDir)")
     print("Grid: \(useUniformGrid ? "uniform" : "bordered") \(columns)x\(rows)")
     print("Frame size: \(frameWidth)x\(frameHeight)")
     print("Sprite sheet: \(sheetURL.path)")
     print("Metadata: \(jsonURL.path)")
-    print("Installed: \(installDir.appendingPathComponent(sheetName).path)")
-    print("Installed metadata: \(installDir.appendingPathComponent(jsonName).path)")
+    print("Pet manifest: \(petJSONURL.path)")
 } catch {
     fputs("Error: \(error.localizedDescription)\n", stderr)
     exit(1)
