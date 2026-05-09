@@ -149,6 +149,41 @@ Each pet folder:
 - `description` (optional)
 - `spritesheetPath`
 
+## Custom Atlas Builder
+
+If you already have 9 horizontal strip images for custom pet states, you can turn them into `192x208` frames and compose a Codex-style `8x9` atlas with:
+
+```bash
+uv run --with pillow python scripts/build_custom_pet_atlas.py \
+  --input-dir /absolute/path/to/custom-strips \
+  --output-dir /absolute/path/to/custom-build
+```
+
+Input expectations:
+
+- `--input-dir` must contain exactly 9 strip images.
+- Supported formats are `png`, `webp`, `jpg`, and `jpeg`.
+- The script assumes a chroma-key background and uses `#FF00FF` by default.
+- Rows are ordered by filename sort order, so name the files in the row order you want.
+- Each detected frame is centered into a `192x208` cell, and unused cells in the `8x9` atlas remain transparent.
+
+Optional chroma-key override:
+
+```bash
+uv run --with pillow python scripts/build_custom_pet_atlas.py \
+  --input-dir /absolute/path/to/custom-strips \
+  --output-dir /absolute/path/to/custom-build \
+  --chroma-key '#00FF00'
+```
+
+Outputs written under `--output-dir`:
+
+- `spritesheet.png`
+- `spritesheet.webp`
+- `contact-sheet.png`
+- `custom-frames-manifest.json`
+- `frames/<state>/<index>.png`
+
 ## Remote Server
 
 Go server lives in `server/`:
