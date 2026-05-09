@@ -1,8 +1,8 @@
 {
-  "description" : "",
-  "displayName" : "Dino",
   "id" : "dino",
-  "spritesheetPath" : "spritesheet.png",
+  "displayName" : "Dino",
+  "description" : "",
+  "spritesheetPath" : "spritesheet.webp",
   "hatch": [
     { "state": "1", "row": 9, "frames": 5, "durations": [320, 320, 320, 320, 320] },
     { "state": "2", "row": 10, "frames": 5, "durations": [320, 320, 320, 320, 320] },
