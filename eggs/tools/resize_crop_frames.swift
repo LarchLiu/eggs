@@ -110,11 +110,24 @@ struct PositionedFrame {
     let column: Int
 }
 
+struct Rect: Encodable {
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+}
+
 struct OutputFrameMetadata: Encodable {
     let index: Int
     let row: Int
     let column: Int
     let filename: String
+    let sourceRect: Rect
+    let bounds: Rect?
+    let offsetX: Int
+    let offsetY: Int
+    let anchorX: Double
+    let anchorY: Double
 }
 
 struct OutputMetadata: Encodable {
@@ -323,6 +336,30 @@ func scaleAndCenterCrop(_ image: RGBAImage, targetWidth: Int, targetHeight: Int)
     }
 
     return output
+}
+
+func contentBounds(_ image: RGBAImage, alphaThreshold: UInt8 = 16) -> Rect? {
+    var minX = image.width
+    var minY = image.height
+    var maxX = -1
+    var maxY = -1
+
+    for y in 0..<image.height {
+        for x in 0..<image.width {
+            if image.pixel(x: x, y: y).a > alphaThreshold {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+    }
+
+    guard maxX >= 0 else {
+        return nil
+    }
+
+    return Rect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
 }
 
 func combineFrames(_ frames: [RGBAImage], columns: Int, frameWidth: Int, frameHeight: Int) -> RGBAImage {
@@ -585,11 +622,27 @@ do {
         let outputURL = outputDir.appendingPathComponent(outputFilename)
         try saveImage(processed, to: outputURL.path, format: .png)
         processedFrames.append((frame, processed))
+        let bounds = contentBounds(processed)
+        let anchorX: Double
+        let anchorY: Double
+        if let bounds {
+            anchorX = (Double(bounds.x) + Double(bounds.width) / 2.0) / Double(options.frameWidth)
+            anchorY = (Double(bounds.y) + Double(bounds.height) / 2.0) / Double(options.frameHeight)
+        } else {
+            anchorX = 0.5
+            anchorY = 0.5
+        }
         outputMetadataFrames.append(OutputFrameMetadata(
             index: frame.row * options.columns + frame.column,
             row: frame.row,
             column: frame.column,
-            filename: outputFilename
+            filename: outputFilename,
+            sourceRect: Rect(x: 0, y: 0, width: source.width, height: source.height),
+            bounds: bounds,
+            offsetX: 0,
+            offsetY: 0,
+            anchorX: anchorX,
+            anchorY: anchorY
         ))
     }
 
