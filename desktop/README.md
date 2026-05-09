@@ -121,7 +121,7 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 
 Built-in pets live in `desktop/pets/<id>/`. Drop a Codex pet package there during development and it will show up in `eggs list`, the right-click `Pet` menu, and as the default `state.json::pet` whenever that field is empty.
 
-On startup, built-in pets are synced into `~/.eggs/builtin/<id>/` using SHA-256 content comparison, and the runtime loads built-in assets from that synced directory. When `state.json` is first created (or has an empty `pet` field), the default pet is chosen by priority: `Built-in` first, then `Local`, then `Remote`; ties within the same group fall back to lexical `id` order. The active pet in `state.json` is stored as `pet` plus `pet_source`, and CLI switches use `eggs pet <source> <id>` (`builtin`, `local`, or `remote`).
+On startup, built-in pets are synced into `~/.eggs/builtin/<id>/` using SHA-256 content comparison, and the runtime loads built-in assets from that synced directory. Packaged apps can sync from Tauri resources, while bare `cargo build --release` binaries also carry an embedded copy of `desktop/pets/` so GitHub release executables can populate `~/.eggs/builtin` on first launch. When `state.json` is first created (or has an empty `pet` field), the default pet is chosen by priority: `Built-in` first, then `Local`, then `Remote`; ties within the same group fall back to lexical `id` order. The active pet in `state.json` is stored as `pet` plus `pet_source`, and CLI switches use `eggs pet <source> <id>` (`builtin`, `local`, or `remote`).
 
 GUI-side runtime mutation (state, pet, scale, …) is forwarded to the running GUI by `tauri-plugin-single-instance`, so CLI subcommands don't need to talk to a separate sidecar process.
 

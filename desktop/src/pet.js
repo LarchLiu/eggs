@@ -165,6 +165,11 @@
       if (!next || next === this.row) return;
       this.row = next;
       this.frame = 0;
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+      this.tick();
     }
 
     setLayout(layout, byState) {

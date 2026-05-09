@@ -35,6 +35,13 @@ const BUILTIN_STATES: [&str; 9] = [
     "review",
 ];
 
+struct EmbeddedBuiltinFile {
+    rel_path: &'static str,
+    bytes: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/embedded_pets.rs"));
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AnimationStateDef {
@@ -339,6 +346,7 @@ pub fn sync_builtin_pets() -> io::Result<()> {
             sync_builtin_pet(&manifest, &manifest_path)?;
         }
     }
+    sync_embedded_builtin_pets(&mut synced_ids)?;
 
     for entry in fs::read_dir(&sync_dir)? {
         let entry = entry?;
@@ -352,6 +360,41 @@ pub fn sync_builtin_pets() -> io::Result<()> {
         fs::remove_dir_all(entry.path())?;
     }
 
+    Ok(())
+}
+
+fn sync_embedded_builtin_pets(synced_ids: &mut BTreeSet<String>) -> io::Result<()> {
+    for pet_id in embedded_builtin_pet_ids() {
+        if !synced_ids.insert(pet_id.clone()) {
+            continue;
+        }
+        sync_one_embedded_builtin_pet(&pet_id)?;
+    }
+    Ok(())
+}
+
+fn embedded_builtin_pet_ids() -> BTreeSet<String> {
+    EMBEDDED_BUILTIN_FILES
+        .iter()
+        .filter_map(|file| file.rel_path.split('/').next())
+        .filter(|id| !id.is_empty())
+        .map(|id| id.to_string())
+        .collect()
+}
+
+fn sync_one_embedded_builtin_pet(pet_id: &str) -> io::Result<()> {
+    let dest_dir = builtin_sync_dir().join(pet_id);
+    fs::create_dir_all(&dest_dir)?;
+    for file in EMBEDDED_BUILTIN_FILES {
+        let Some((file_pet_id, rel_tail)) = file.rel_path.split_once('/') else {
+            continue;
+        };
+        if file_pet_id != pet_id || rel_tail.is_empty() {
+            continue;
+        }
+        let dest = dest_dir.join(rel_tail);
+        write_if_hash_diff(file.bytes, &dest)?;
+    }
     Ok(())
 }
 
@@ -518,8 +561,27 @@ fn copy_if_hash_diff(src: &Path, dest: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn write_if_hash_diff(bytes: &[u8], dest: &Path) -> io::Result<()> {
+    let should_copy = if !dest.exists() {
+        true
+    } else {
+        bytes_sha256_hex(bytes) != file_sha256_hex(dest)?
+    };
+    if should_copy {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(dest, bytes)?;
+    }
+    Ok(())
+}
+
 fn file_sha256_hex(path: &Path) -> io::Result<String> {
     let bytes = fs::read(path)?;
+    Ok(bytes_sha256_hex(&bytes))
+}
+
+fn bytes_sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -528,7 +590,7 @@ fn file_sha256_hex(path: &Path) -> io::Result<String> {
     for byte in digest {
         let _ = write!(out, "{byte:02x}");
     }
-    Ok(out)
+    out
 }
 
 fn sanitize_manifest_states(manifest: &mut PetManifest) -> bool {

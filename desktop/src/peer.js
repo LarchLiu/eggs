@@ -155,6 +155,11 @@
       if (!next || next === this.row) return;
       this.row = next;
       this.frame = 0;
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+      this.tick();
     }
     setLayout(layout, byState) {
       this.layout = Array.isArray(layout) && layout.length > 0 ? layout : BUILTIN_LAYOUT;
