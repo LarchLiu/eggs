@@ -671,6 +671,17 @@ func combineFrames(_ frames: [RGBAImage], columns: Int, rows: Int) -> RGBAImage 
     return sheet
 }
 
+func frameFilename(prefix: String, row: Int, column: Int, rowDigits: Int, columnDigits: Int) -> String {
+    String(
+        format: "%@_%0*d x %0*d.png".replacingOccurrences(of: " ", with: ""),
+        prefix,
+        rowDigits,
+        row,
+        columnDigits,
+        column
+    )
+}
+
 do {
     let options = try parseOptions(CommandLine.arguments)
     let outputDir = options.outputDir
@@ -736,6 +747,8 @@ do {
 
     var frames: [RGBAImage] = []
     var metadata: [FrameMetadata] = []
+    let rowDigits = max(2, String(max(0, rows - 1)).count)
+    let columnDigits = max(2, String(max(0, columns - 1)).count)
 
     for row in 0..<rows {
         for col in 0..<columns {
@@ -793,7 +806,13 @@ do {
             case .centerContent:
                 placed = padToCanvasCenteredOnContent(transparentFrame, width: frameWidth, height: frameHeight)
             }
-            let filename = String(format: "%@_%02d.png", options.prefix, row * columns + col)
+            let filename = frameFilename(
+                prefix: options.prefix,
+                row: row,
+                column: col,
+                rowDigits: rowDigits,
+                columnDigits: columnDigits
+            )
             try savePNG(placed.image, to: framesDir + "/" + filename)
             frames.append(placed.image)
             let anchorX: Double
