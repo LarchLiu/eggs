@@ -124,6 +124,15 @@ fn seed_builtin_pets_dir_env(app: &tauri::AppHandle) {
     }
     if let Ok(resource_dir) = app.path().resource_dir() {
         let pets_dir = resource_dir.join("pets");
+        // On Windows, a bare `cargo build --release` / CI-built exe reports
+        // its own directory as `resource_dir()`. If the user runs that exe
+        // from `~/.eggs/`, this would accidentally reinterpret
+        // `~/.eggs/pets/` (the user's local pets) as built-in resources and
+        // mirror them into `~/.eggs/builtin/`. Treat that path as local-only
+        // and fall back to embedded builtins instead.
+        if pets_dir == crate::state::app_dir().join("pets") {
+            return;
+        }
         if pets_dir.exists() {
             std::env::set_var("EGGS_BUILTIN_PETS_DIR", pets_dir);
         }
