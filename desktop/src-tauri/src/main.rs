@@ -449,10 +449,11 @@ fn main() {
             let peer_windows_for_move = peer_windows.clone();
             let bubble_windows_for_move = bubble_windows.clone();
             win.on_window_event(move |event| {
-                if let tauri::WindowEvent::Moved(_) = event {
+                if let tauri::WindowEvent::Moved(pos) = event {
                     let app = app_handle_for_move.clone();
                     let mgr = peer_windows_for_move.clone();
                     let bubbles = bubble_windows_for_move.clone();
+                    let _ = app.emit("pet-window-moved", (pos.x, pos.y));
                     tauri::async_runtime::spawn(async move {
                         mgr.reposition_all(&app).await;
                         bubbles.reposition_all(&app).await;

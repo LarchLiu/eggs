@@ -24,7 +24,10 @@
 
   const CELL_W = 192;
   const CELL_H = 208;
-  const DRAG_THRESHOLD_PX = 6;
+  // Hold-to-jump should feel stable: require a clear move before switching
+  // from jumping to running/dragging.
+  const DRAG_THRESHOLD_PX = 16;
+  const RUN_DIRECTION_SWITCH_PX = 14;
 
   // Built-in states (Codex pet baseline). A pet manifest can append more
   // states via { custom: [...], hatch: [...] }.
@@ -325,6 +328,65 @@
 
     // list_states() is menu-oriented and does not include hatch states.
 
+    const win = getCurrentWindow();
+    let pointerDown = false;
+    let dragStarted = false;
+    let downPoint = null;
+    let dragLastWindowX = null;
+    let dragDirection = null;
+    let dragPendingDeltaX = 0;
+    let transientState = null;
+    let restoreState = null;
+
+    function hasState(name) {
+      return !!(name && pet.byState && pet.byState[name]);
+    }
+
+    function fallbackState() {
+      if (hasState(current.state)) return current.state;
+      if (hasState("idle")) return "idle";
+      return (pet.layout && pet.layout[0] && pet.layout[0].state) || null;
+    }
+
+    function applyStableState() {
+      const name = fallbackState();
+      if (name) pet.setState(name);
+    }
+
+    function setTransientState(name, { captureRestore = false } = {}) {
+      if (!hasState(name)) return false;
+      if (captureRestore && !restoreState) {
+        restoreState = fallbackState();
+      }
+      transientState = name;
+      pet.setState(name);
+      return true;
+    }
+
+    function clearTransientState() {
+      transientState = null;
+      const next = hasState(restoreState) ? restoreState : fallbackState();
+      restoreState = null;
+      if (next) {
+        pet.setState(next);
+      }
+    }
+
+    function releasePointer({ resetVisual = true } = {}) {
+      const wasDragging = dragStarted;
+      const startedWithPointer = pointerDown;
+      pointerDown = false;
+      dragStarted = false;
+      downPoint = null;
+      dragLastWindowX = null;
+      dragDirection = null;
+      dragPendingDeltaX = 0;
+      el.dataset.grab = "false";
+      if (resetVisual && transientState && (startedWithPointer || wasDragging)) {
+        clearTransientState();
+      }
+    }
+
     // React to state.json changes (CLI subcommands or external editors).
     await listen("state-changed", async (evt) => {
       const next = evt.payload;
@@ -333,7 +395,7 @@
         hatchRunToken += 1;
         await loadPet(next.pet);
       }
-      if (next.state !== current.state) {
+      if (next.state !== current.state && !transientState) {
         pet.setState(next.state);
       }
       if (next.scale_millis !== current.scale_millis) {
@@ -343,19 +405,24 @@
         await playHatchIfNeeded(next.pet, currentPetSource, next.state);
       }
       current = next;
+      if (!transientState) {
+        applyStableState();
+      } else if (!hasState(transientState)) {
+        clearTransientState();
+      }
     });
-
-    const win = getCurrentWindow();
-    let pointerDown = false;
-    let dragStarted = false;
-    let downPoint = null;
 
     window.addEventListener("mousedown", async (e) => {
       if (e.button === 0) {
         pointerDown = true;
         dragStarted = false;
         downPoint = { x: e.clientX, y: e.clientY };
+        dragLastWindowX = null;
+        dragDirection = null;
+        dragPendingDeltaX = 0;
         el.dataset.grab = "true";
+        restoreState = fallbackState();
+        setTransientState("jumping", { captureRestore: true });
       }
     });
 
@@ -364,27 +431,65 @@
       const dx = e.clientX - downPoint.x;
       const dy = e.clientY - downPoint.y;
       if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+      const runState = dx >= 0 ? "running-right" : "running-left";
+      setTransientState(runState, { captureRestore: true });
+      dragDirection = dx >= 0 ? "right" : "left";
+      dragPendingDeltaX = 0;
       dragStarted = true;
       try {
         await win.startDragging();
       } catch (err) {
         console.warn("startDragging failed", err);
-        dragStarted = false;
-        el.dataset.grab = "false";
+        releasePointer({ resetVisual: true });
       }
     });
 
     window.addEventListener("mouseup", () => {
-      pointerDown = false;
-      dragStarted = false;
-      downPoint = null;
-      el.dataset.grab = "false";
+      releasePointer({ resetVisual: true });
     });
     window.addEventListener("mouseleave", () => {
-      pointerDown = false;
-      dragStarted = false;
-      downPoint = null;
-      el.dataset.grab = "false";
+      releasePointer({ resetVisual: true });
+    });
+    window.addEventListener("blur", () => {
+      releasePointer({ resetVisual: true });
+    });
+
+    await listen("pet-window-moved", (evt) => {
+      if (!pointerDown || !dragStarted) return;
+      const payload = evt && evt.payload;
+      const x = Array.isArray(payload) ? Number(payload[0]) : Number(payload && payload.x);
+      if (!Number.isFinite(x)) return;
+      if (dragLastWindowX == null) {
+        dragLastWindowX = x;
+        return;
+      }
+      const dx = x - dragLastWindowX;
+      dragLastWindowX = x;
+      if (dx === 0) return;
+      const nextDirection = dx > 0 ? "right" : "left";
+      if (!dragDirection) {
+        dragDirection = nextDirection;
+        dragPendingDeltaX = 0;
+        setTransientState(
+          nextDirection === "right" ? "running-right" : "running-left",
+          { captureRestore: false },
+        );
+        return;
+      }
+      if (nextDirection === dragDirection) {
+        dragPendingDeltaX = 0;
+        return;
+      }
+      dragPendingDeltaX += dx;
+      if (dragPendingDeltaX >= RUN_DIRECTION_SWITCH_PX) {
+        dragDirection = "right";
+        dragPendingDeltaX = 0;
+        setTransientState("running-right", { captureRestore: false });
+      } else if (dragPendingDeltaX <= -RUN_DIRECTION_SWITCH_PX) {
+        dragDirection = "left";
+        dragPendingDeltaX = 0;
+        setTransientState("running-left", { captureRestore: false });
+      }
     });
 
     window.addEventListener("contextmenu", async (e) => {
