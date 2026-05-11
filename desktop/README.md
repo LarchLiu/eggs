@@ -110,7 +110,7 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 - `eggs` / `eggs run` — launch foreground GUI (blocks current shell).
 - `eggs start` / `eggs stop` — fork detached GUI / SIGTERM the running one (matches `egg_desktop.py:start_background` / `stop_background`).
 - `eggs pet <source> <id>` — switch active pet; in remote mode also pushes that exact source-group sprite to the server before broadcasting to peers.
-- `eggs list` and the right-click `Pet` menu include both built-in pets from `desktop/pets/` and user-installed pets.
+- `eggs list` shows user-installed pets and any built-in pets that a given build ships with.
 - `eggs remote` — enable remote using the saved `remote.json` mode/room; when `mode=room` but `room` is empty it falls back to random matchmaking.
 - `eggs remote room <code> [limit]` — save room mode with an invite code and optional room cap (default `5`), upload the sprite if needed, and ensure the GUI is running. The first client to create a room locks its limit; later joiners cannot change it.
 - `eggs remote random` — switch to random mode without clearing any saved room code from `remote.json`.
@@ -119,9 +119,7 @@ A leftover dangling symlink isn't dangerous (just `ENOENT` when invoked). If you
 - `eggs install <pet-dir>` — copy a pet folder into `~/.eggs/pets/`.
 - `eggs status` / `eggs list`.
 
-Built-in pets live in `desktop/pets/<id>/`. Drop a Codex pet package there during development and it will show up in `eggs list`, the right-click `Pet` menu, and as the default `state.json::pet` whenever that field is empty.
-
-On startup, built-in pets are synced into `~/.eggs/builtin/<id>/` using SHA-256 content comparison, and the runtime loads built-in assets from that synced directory. Packaged apps can sync from Tauri resources, while bare `cargo build --release` binaries also carry an embedded copy of `desktop/pets/` so GitHub release executables can populate `~/.eggs/builtin` on first launch. When `state.json` is first created (or has an empty `pet` field), the default pet is chosen by priority: `Built-in` first, then `Local`, then `Remote`; ties within the same group fall back to lexical `id` order. The active pet in `state.json` is stored as `pet` plus `pet_source`, and CLI switches use `eggs pet <source> <id>` (`builtin`, `local`, or `remote`).
+When a build ships built-in pets, they are synced into `~/.eggs/builtin/<id>/` using SHA-256 content comparison, and the runtime loads built-in assets from that synced directory. When `state.json` is first created (or has an empty `pet` field), the default pet is chosen by priority: `Built-in` first, then `Local`, then `Remote`; ties within the same group fall back to lexical `id` order. The active pet in `state.json` is stored as `pet` plus `pet_source`, and CLI switches use `eggs pet <source> <id>` (`builtin`, `local`, or `remote`).
 
 GUI-side runtime mutation (state, pet, scale, …) is forwarded to the running GUI by `tauri-plugin-single-instance`, so CLI subcommands don't need to talk to a separate sidecar process.
 

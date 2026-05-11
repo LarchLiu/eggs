@@ -113,8 +113,6 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let pets = pet::list_installed_pets().map_err(|e| e.to_string())?;
     let custom_states = custom_menu_states_for_pet(&current.pet);
     let has_hatch = has_hatch_states_for_pet(&current.pet);
-
-    let pet_submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
     let mut builtin_pets = Vec::new();
     let mut local_pets = Vec::new();
     let mut remote_pets = Vec::new();
@@ -130,88 +128,91 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let has_builtin_pets = !builtin_pets.is_empty();
     let has_local_pets = !local_pets.is_empty();
     let has_remote_pets = !remote_pets.is_empty();
-    let mut inserted_group = false;
-    if has_builtin_pets {
-        let header = MenuItem::with_id(
-            app,
-            PET_HEADER_BUILTIN_ID,
-            "Built-in",
-            false,
-            Option::<&str>::None,
-        )
-        .map_err(|e| e.to_string())?;
-        pet_submenu.append(&header).map_err(|e| e.to_string())?;
-        for info in builtin_pets {
-            let item = CheckMenuItem::with_id(
+    let pet_submenu = if has_builtin_pets || has_local_pets || has_remote_pets {
+        let submenu = Submenu::new(app, "Pet", true).map_err(|e| e.to_string())?;
+        if has_builtin_pets {
+            let header = MenuItem::with_id(
                 app,
-                pet_menu_id(info.source_kind(), &info.id),
-                info.display_name,
-                true,
-                info.id == current.pet,
+                PET_HEADER_BUILTIN_ID,
+                "Built-in",
+                false,
                 Option::<&str>::None,
             )
             .map_err(|e| e.to_string())?;
-            pet_submenu.append(&item).map_err(|e| e.to_string())?;
-        }
-        inserted_group = true;
-    }
-    if has_local_pets {
-        if inserted_group {
-            pet_submenu
-                .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+            submenu.append(&header).map_err(|e| e.to_string())?;
+            for info in builtin_pets {
+                let item = CheckMenuItem::with_id(
+                    app,
+                    pet_menu_id(info.source_kind(), &info.id),
+                    info.display_name,
+                    true,
+                    info.id == current.pet,
+                    Option::<&str>::None,
+                )
                 .map_err(|e| e.to_string())?;
+                submenu.append(&item).map_err(|e| e.to_string())?;
+            }
         }
-        let header = MenuItem::with_id(
-            app,
-            PET_HEADER_LOCAL_ID,
-            "Local",
-            false,
-            Option::<&str>::None,
-        )
-        .map_err(|e| e.to_string())?;
-        pet_submenu.append(&header).map_err(|e| e.to_string())?;
-        for info in local_pets {
-            let item = CheckMenuItem::with_id(
+        if has_local_pets {
+            if has_builtin_pets {
+                submenu
+                    .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            }
+            let header = MenuItem::with_id(
                 app,
-                pet_menu_id(info.source_kind(), &info.id),
-                info.display_name,
-                true,
-                info.id == current.pet,
+                PET_HEADER_LOCAL_ID,
+                "Local",
+                false,
                 Option::<&str>::None,
             )
             .map_err(|e| e.to_string())?;
-            pet_submenu.append(&item).map_err(|e| e.to_string())?;
+            submenu.append(&header).map_err(|e| e.to_string())?;
+            for info in local_pets {
+                let item = CheckMenuItem::with_id(
+                    app,
+                    pet_menu_id(info.source_kind(), &info.id),
+                    info.display_name,
+                    true,
+                    info.id == current.pet,
+                    Option::<&str>::None,
+                )
+                .map_err(|e| e.to_string())?;
+                submenu.append(&item).map_err(|e| e.to_string())?;
+            }
         }
-        inserted_group = true;
-    }
-    if inserted_group && has_remote_pets {
-        pet_submenu
-            .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        if has_remote_pets {
+            if has_builtin_pets || has_local_pets {
+                submenu
+                    .append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            }
+            let header = MenuItem::with_id(
+                app,
+                PET_HEADER_REMOTE_ID,
+                "Remote",
+                false,
+                Option::<&str>::None,
+            )
             .map_err(|e| e.to_string())?;
-    }
-    if has_remote_pets {
-        let header = MenuItem::with_id(
-            app,
-            PET_HEADER_REMOTE_ID,
-            "Remote",
-            false,
-            Option::<&str>::None,
-        )
-        .map_err(|e| e.to_string())?;
-        pet_submenu.append(&header).map_err(|e| e.to_string())?;
-    }
-    for info in remote_pets {
-        let item = CheckMenuItem::with_id(
-            app,
-            pet_menu_id(info.source_kind(), &info.id),
-            info.display_name,
-            true,
-            info.id == current.pet,
-            Option::<&str>::None,
-        )
-        .map_err(|e| e.to_string())?;
-        pet_submenu.append(&item).map_err(|e| e.to_string())?;
-    }
+            submenu.append(&header).map_err(|e| e.to_string())?;
+            for info in remote_pets {
+                let item = CheckMenuItem::with_id(
+                    app,
+                    pet_menu_id(info.source_kind(), &info.id),
+                    info.display_name,
+                    true,
+                    info.id == current.pet,
+                    Option::<&str>::None,
+                )
+                .map_err(|e| e.to_string())?;
+                submenu.append(&item).map_err(|e| e.to_string())?;
+            }
+        }
+        Some(submenu)
+    } else {
+        None
+    };
 
     let state_submenu = Submenu::new(app, "State", true).map_err(|e| e.to_string())?;
     if has_hatch {
@@ -275,7 +276,9 @@ pub fn show_context_menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), 
     let remote_submenu = build_remote_submenu(app)?;
 
     let menu = Menu::new(app).map_err(|e| e.to_string())?;
-    menu.append(&pet_submenu).map_err(|e| e.to_string())?;
+    if let Some(pet_submenu) = pet_submenu {
+        menu.append(&pet_submenu).map_err(|e| e.to_string())?;
+    }
     menu.append(&state_submenu).map_err(|e| e.to_string())?;
     menu.append(&scale_submenu).map_err(|e| e.to_string())?;
     menu.append(&remote_submenu).map_err(|e| e.to_string())?;

@@ -347,6 +347,9 @@ pub fn sync_builtin_pets() -> io::Result<()> {
         }
     }
     sync_embedded_builtin_pets(&mut synced_ids)?;
+    if synced_ids.is_empty() {
+        return Ok(());
+    }
 
     for entry in fs::read_dir(&sync_dir)? {
         let entry = entry?;
