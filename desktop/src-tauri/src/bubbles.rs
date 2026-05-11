@@ -584,14 +584,12 @@ impl BubbleWindowManager {
         }
     }
 
-    pub async fn allowed_height_range(&self, bubble_id: &str) -> (f64, f64) {
+    pub async fn allowed_height_range(&self, app: &AppHandle, bubble_id: &str) -> (f64, f64) {
         let store = self.store.lock().await;
-        let mode = store
-            .open
-            .get(bubble_id)
-            .map(|o| o.mode)
-            .unwrap_or(BubbleMode::Chat);
-        height_range_for_mode(mode)
+        let Some(open) = store.open.get(bubble_id) else {
+            return height_range_for_mode(BubbleMode::Chat);
+        };
+        dynamic_height_range_for(app, open)
     }
 
     pub async fn open_local_input(&self, app: &AppHandle) {
@@ -939,8 +937,10 @@ struct AnchorRect {
     y: f64,
     w: f64,
     h: f64,
-    screen_w: f64,
-    screen_h: f64,
+    work_x: f64,
+    work_y: f64,
+    work_w: f64,
+    work_h: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -969,14 +969,18 @@ fn anchor_rect(app: &AppHandle, owner: &BubbleOwner) -> Option<AnchorRect> {
     let scale_factor = anchor.scale_factor().ok().unwrap_or(1.0);
     let pos = anchor.outer_position().ok()?;
     let size = anchor.outer_size().ok()?;
-    let (screen_w, screen_h) = primary_monitor_size(app, scale_factor).unwrap_or((1440.0, 900.0));
+    let work_area = anchor_monitor_work_area(&anchor, scale_factor)
+        .or_else(|| primary_monitor_work_area(app, scale_factor))
+        .unwrap_or((0.0, 0.0, 1440.0, 900.0));
     Some(AnchorRect {
         x: pos.x as f64 / scale_factor,
         y: pos.y as f64 / scale_factor,
         w: size.width as f64 / scale_factor,
         h: size.height as f64 / scale_factor,
-        screen_w,
-        screen_h,
+        work_x: work_area.0,
+        work_y: work_area.1,
+        work_w: work_area.2,
+        work_h: work_area.3,
     })
 }
 
@@ -986,15 +990,19 @@ fn preferred_position(
     hook_offset: f64,
     chat_lift: f64,
 ) -> (f64, f64) {
+    let min_x = anchor.work_x + 8.0;
+    let max_x = (anchor.work_x + anchor.work_w - BUBBLE_WIDTH - 8.0).max(min_x);
     let x = (anchor.x + (anchor.w - BUBBLE_WIDTH) * 0.5)
-        .clamp(8.0, (anchor.screen_w - BUBBLE_WIDTH - 8.0).max(8.0));
+        .clamp(min_x, max_x);
     let y = match open.mode {
         BubbleMode::Chat | BubbleMode::Input => anchor.y - 8.0 - open.height - chat_lift,
         BubbleMode::Hook => anchor.y + anchor.h + 8.0 + hook_offset,
     };
+    let min_y = anchor.work_y + 8.0;
+    let max_y = (anchor.work_y + anchor.work_h - open.height - 8.0).max(min_y);
     (
         x,
-        y.clamp(8.0, (anchor.screen_h - open.height - 8.0).max(8.0)),
+        y.clamp(min_y, max_y),
     )
 }
 
@@ -1020,18 +1028,19 @@ fn resolve_collision(
     match mode {
         BubbleMode::Chat | BubbleMode::Input => {
             let mut y_up = preferred.1;
-            while y_up > 8.0 {
-                y_up = (y_up - step).max(8.0);
+            let min_y = anchor.work_y + 8.0;
+            let max_y = (anchor.work_y + anchor.work_h - height - 8.0).max(min_y);
+            while y_up > min_y {
+                y_up = (y_up - step).max(min_y);
                 candidate.y = y_up;
                 if !placed.iter().any(|r| candidate.intersects(*r)) {
                     return (candidate.x, candidate.y);
                 }
-                if y_up <= 8.0 {
+                if y_up <= min_y {
                     break;
                 }
             }
             let mut y_down = preferred.1;
-            let max_y = (anchor.screen_h - height - 8.0).max(8.0);
             while y_down < max_y {
                 y_down = (y_down + step).min(max_y);
                 candidate.y = y_down;
@@ -1045,7 +1054,8 @@ fn resolve_collision(
         }
         BubbleMode::Hook => {
             let mut y_down = preferred.1;
-            let max_y = (anchor.screen_h - height - 8.0).max(8.0);
+            let min_y = anchor.work_y + 8.0;
+            let max_y = (anchor.work_y + anchor.work_h - height - 8.0).max(min_y);
             while y_down < max_y {
                 y_down = (y_down + step).min(max_y);
                 candidate.y = y_down;
@@ -1057,13 +1067,13 @@ fn resolve_collision(
                 }
             }
             let mut y_up = preferred.1;
-            while y_up > 8.0 {
-                y_up = (y_up - step).max(8.0);
+            while y_up > min_y {
+                y_up = (y_up - step).max(min_y);
                 candidate.y = y_up;
                 if !placed.iter().any(|r| candidate.intersects(*r)) {
                     return (candidate.x, candidate.y);
                 }
-                if y_up <= 8.0 {
+                if y_up <= min_y {
                     break;
                 }
             }
@@ -1087,14 +1097,51 @@ fn is_chat_like(mode: BubbleMode) -> bool {
 fn height_range_for_mode(mode: BubbleMode) -> (f64, f64) {
     match mode {
         BubbleMode::Input => (INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT),
-        _ => (BUBBLE_MIN_HEIGHT, BUBBLE_MAX_HEIGHT),
+        BubbleMode::Hook => (BUBBLE_MIN_HEIGHT, BUBBLE_MAX_HEIGHT),
+        BubbleMode::Chat => (BUBBLE_MIN_HEIGHT, BUBBLE_MAX_HEIGHT),
     }
 }
 
-fn primary_monitor_size(app: &AppHandle, scale_factor: f64) -> Option<(f64, f64)> {
+fn dynamic_height_range_for(app: &AppHandle, open: &OpenBubble) -> (f64, f64) {
+    if open.mode != BubbleMode::Hook {
+        return height_range_for_mode(open.mode);
+    }
+
+    let Some(anchor) = anchor_rect(app, &open.owner) else {
+        return height_range_for_mode(open.mode);
+    };
+    let preferred_y = anchor.y + anchor.h + 8.0;
+    let min_y = anchor.work_y + 8.0;
+    let max_y = (anchor.work_y + anchor.work_h - BUBBLE_MIN_HEIGHT - 8.0).max(min_y);
+    let bubble_y = preferred_y.clamp(min_y, max_y);
+    let work_bottom = anchor.work_y + anchor.work_h - 8.0;
+    let max = (work_bottom - bubble_y).max(BUBBLE_MIN_HEIGHT);
+    (BUBBLE_MIN_HEIGHT, max)
+}
+
+fn anchor_monitor_work_area(
+    anchor: &tauri::WebviewWindow,
+    scale_factor: f64,
+) -> Option<(f64, f64, f64, f64)> {
+    let mon = anchor.current_monitor().ok().flatten()?;
+    monitor_work_area(&mon, scale_factor)
+}
+
+fn primary_monitor_work_area(app: &AppHandle, scale_factor: f64) -> Option<(f64, f64, f64, f64)> {
     let mon = app.primary_monitor().ok().flatten()?;
-    let size = mon.size();
+    monitor_work_area(&mon, scale_factor)
+}
+
+fn monitor_work_area(
+    mon: &tauri::Monitor,
+    scale_factor: f64,
+) -> Option<(f64, f64, f64, f64)> {
+    let work = mon.work_area();
+    let pos = work.position;
+    let size = work.size;
     Some((
+        pos.x as f64 / scale_factor,
+        pos.y as f64 / scale_factor,
         size.width as f64 / scale_factor,
         size.height as f64 / scale_factor,
     ))

@@ -199,15 +199,15 @@ async fn bubble_resize(
     window: tauri::WebviewWindow,
     bubble_id: String,
     height: f64,
-) -> Result<(), String> {
-    let (min, max) = state.allowed_height_range(&bubble_id).await;
+) -> Result<f64, String> {
+    let (min, max) = state.allowed_height_range(&app, &bubble_id).await;
     let clamped = height.clamp(min, max);
     window
         .set_size(LogicalSize::new(bubbles::BUBBLE_WIDTH, clamped))
         .map_err(|e| e.to_string())?;
     state.set_height(&bubble_id, clamped).await;
     state.reposition_all(&app).await;
-    Ok(())
+    Ok(clamped)
 }
 
 #[tauri::command]

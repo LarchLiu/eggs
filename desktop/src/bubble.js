@@ -11,6 +11,7 @@
     min_height: 20,
     max_height: 84,
   };
+  let expanded = false;
 
   function readBubbleId() {
     const raw = window.location.hash.replace(/^#/, "");
@@ -79,7 +80,7 @@
     });
   }
 
-  function render(root, meta, text, payload) {
+  function render(root, meta, text, expandBtn, payload) {
     const source = (payload && payload.source) || "hook";
     const mode = payload && payload.mode ? payload.mode : "hook";
     root.className = "bubble";
@@ -101,21 +102,36 @@
     } else {
       renderTextLines(text, [(payload && payload.text) || ""]);
     }
-    applyDynamicHeight(root, text).catch(() => {});
+    applyDynamicHeight(root, text, expandBtn).catch(() => {});
   }
 
-  async function applyDynamicHeight(root, text) {
+  async function applyDynamicHeight(root, text, expandBtn) {
     const computed = window.getComputedStyle(text);
     const lineHeight = resolveLineHeightPx(text, computed);
     const maxTextHeight = lineHeight * 3;
+    const isHook = root.classList.contains("hook");
 
     text.style.maxHeight = "none";
     text.style.overflowY = "hidden";
     const naturalTextHeight = text.scrollHeight;
 
-    const visibleTextHeight = Math.min(naturalTextHeight, maxTextHeight);
+    const hasOverflow = isHook && naturalTextHeight > maxTextHeight + 1;
+    if (!hasOverflow) {
+      expanded = false;
+    }
+    root.classList.toggle("has-expand", hasOverflow);
+    root.classList.toggle("expanded", expanded && hasOverflow);
+    if (expandBtn) {
+      expandBtn.textContent = expanded && hasOverflow ? "∧" : "∨";
+      expandBtn.setAttribute("aria-label", expanded && hasOverflow ? "collapse" : "expand");
+      expandBtn.setAttribute("aria-expanded", expanded && hasOverflow ? "true" : "false");
+    }
+
+    const visibleTextHeight = expanded && hasOverflow
+      ? naturalTextHeight
+      : Math.min(naturalTextHeight, maxTextHeight);
     text.style.maxHeight = `${Math.ceil(visibleTextHeight)}px`;
-    const hasScroll = naturalTextHeight > maxTextHeight;
+    const hasScroll = naturalTextHeight > visibleTextHeight + 1;
     text.style.overflowY = hasScroll ? "auto" : "hidden";
     text.classList.toggle("has-scroll", hasScroll);
 
@@ -125,15 +141,36 @@
     const borderTop = parseFloat(rootStyle.borderTopWidth) || 0;
     const borderBottom = parseFloat(rootStyle.borderBottomWidth) || 0;
     const chromeHeight = paddingTop + paddingBottom + borderTop + borderBottom;
-    const desiredHeight = Math.min(
-      bubbleLayout.max_height,
-      Math.max(bubbleLayout.min_height, Math.ceil(chromeHeight + visibleTextHeight)),
+    const desiredNaturalHeight = Math.max(
+      bubbleLayout.min_height,
+      Math.ceil(chromeHeight + visibleTextHeight),
     );
+    const desiredHeight = isHook && expanded && hasOverflow
+      ? desiredNaturalHeight
+      : Math.min(bubbleLayout.max_height, desiredNaturalHeight);
+
+    if (desiredHeight < Math.ceil(chromeHeight + visibleTextHeight)) {
+      const availableTextHeight = Math.max(
+        lineHeight,
+        desiredHeight - chromeHeight,
+      );
+      text.style.maxHeight = `${Math.floor(availableTextHeight)}px`;
+      text.style.overflowY = "auto";
+      text.classList.add("has-scroll");
+    }
 
     document.documentElement.style.height = `${desiredHeight}px`;
     document.body.style.height = `${desiredHeight}px`;
     const bubbleId = readBubbleId();
-    await invoke("bubble_resize", { bubbleId, height: desiredHeight });
+    const actualHeight = Number(await invoke("bubble_resize", { bubbleId, height: desiredHeight }));
+    if (Number.isFinite(actualHeight) && actualHeight > 0 && Math.abs(actualHeight - desiredHeight) > 1) {
+      document.documentElement.style.height = `${actualHeight}px`;
+      document.body.style.height = `${actualHeight}px`;
+      const availableTextHeight = Math.max(lineHeight, actualHeight - chromeHeight);
+      text.style.maxHeight = `${Math.floor(availableTextHeight)}px`;
+      text.style.overflowY = naturalTextHeight > availableTextHeight + 1 ? "auto" : "hidden";
+      text.classList.toggle("has-scroll", naturalTextHeight > availableTextHeight + 1);
+    }
   }
 
   function resolveLineHeightPx(textEl, computed) {
@@ -201,7 +238,8 @@
     const meta = document.getElementById("meta");
     const text = document.getElementById("text");
     const closeBtn = document.getElementById("close");
-    render(root, meta, text, init || {});
+    const expandBtn = document.getElementById("expand");
+    render(root, meta, text, expandBtn, init || {});
 
     root.addEventListener("mouseenter", () => {
       invoke("bubble_hover", { bubbleId, hovering: true }).catch(() => {});
@@ -217,11 +255,18 @@
         }
       });
     }
+    if (expandBtn) {
+      expandBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        expanded = !expanded;
+        applyDynamicHeight(root, text, expandBtn).catch(() => {});
+      });
+    }
 
     await listen("bubble-update", (evt) => {
       const payload = evt && evt.payload ? evt.payload : {};
       if (payload.id && payload.id !== bubbleId) return;
-      render(root, meta, text, payload);
+      render(root, meta, text, expandBtn, payload);
     });
   }
 

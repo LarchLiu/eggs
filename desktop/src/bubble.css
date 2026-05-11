@@ -50,6 +50,10 @@ body {
   padding-right: 4px;
 }
 
+.bubble.expanded .text {
+  max-height: none;
+}
+
 .event-label {
   font-weight: 700;
 }
@@ -79,10 +83,9 @@ body {
   border-radius: 10px;
 }
 
-.close {
+.close,
+.expand {
   position: absolute;
-  top: 2px;
-  left: 2px;
   width: 14px;
   height: 14px;
   padding: 0;
@@ -102,13 +105,31 @@ body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
+.close {
+  top: 2px;
+  left: 2px;
+}
+
+.expand {
+  right: 10px;
+  bottom: 2px;
+  display: none;
+}
+
+.bubble.has-expand .expand {
+  display: block;
+}
+
 .bubble:hover .close,
+.bubble:hover .expand,
+.expand:focus-visible,
 .close:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }
 
-.close:hover {
+.close:hover,
+.expand:hover {
   background: #f1f1f1;
 }
 
