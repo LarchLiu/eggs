@@ -158,7 +158,7 @@ type deviceCleanupState struct {
 
 func main() {
 	addr := flag.String("addr", ":8787", "HTTP listen address")
-	dataDir := flag.String("data", filepath.Join(homeDir(), ".codex", "eggs-server"), "server data directory")
+	dataDir := flag.String("data", "./data", "server data directory")
 	baseURL := flag.String("base-url", "", "public base URL; defaults to request host")
 	publicByDefault := flag.Bool("public-by-default", true, "mark uploaded sprites public immediately")
 	flag.Parse()
@@ -1950,13 +1950,6 @@ func addCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-}
-
-func homeDir() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return home
-	}
-	return "."
 }
 
 func min(a, b int) int {

@@ -6,7 +6,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-assets
+assets/*
+!assets/screenshot.jpg
 !eggs/assets
 goblins
 

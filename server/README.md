@@ -60,7 +60,7 @@ docker compose up -d --build
 ```bash
 ./eggs-server \
   -addr :8787 \
-  -data ~/.codex/eggs-server \
+  -data ./data \
   -base-url http://localhost:8787
 ```
 
