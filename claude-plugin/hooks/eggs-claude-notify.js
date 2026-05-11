@@ -119,7 +119,7 @@ switch (event) {
     send('Agent: subagent done');
     break;
   case 'prompt-submit': {
-    const txt = clip(field('prompt'));
+    const txt = (field('prompt'));
     send(`You: ${txt}`);
     break;
   }
