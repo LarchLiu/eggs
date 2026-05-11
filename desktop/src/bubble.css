@@ -50,6 +50,22 @@ body {
   padding-right: 4px;
 }
 
+.event-label {
+  font-weight: 700;
+}
+
+.permission-label {
+  color: #c62828;
+}
+
+.agent-label {
+  color: #2e7d32;
+}
+
+.tool-label {
+  color: #1565c0;
+}
+
 .text::-webkit-scrollbar {
   width: 4px;
 }

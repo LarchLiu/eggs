@@ -12,7 +12,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|apply_patch|mcp__.*|exec_command|write_stdin",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",

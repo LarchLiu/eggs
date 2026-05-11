@@ -21,6 +21,64 @@
     }
   }
 
+  function appendHighlightedLine(target, line) {
+    const text = String(line || "");
+    const match = text.match(/^(?:(\d{2}:\d{2})\s+)?([^:\n]{1,40}):(.*)$/s);
+    if (!match) {
+      target.appendChild(document.createTextNode(text));
+      return;
+    }
+
+    const [, timePrefix, label, rest] = match;
+    const normalized = label.trim();
+    const labelClass = labelClassFor(normalized);
+    if (!labelClass) {
+      target.appendChild(document.createTextNode(text));
+      return;
+    }
+
+    if (timePrefix) {
+      target.appendChild(document.createTextNode(`${timePrefix} `));
+    }
+    const labelEl = document.createElement("span");
+    labelEl.className = `event-label ${labelClass}`;
+    labelEl.textContent = normalized;
+    target.appendChild(labelEl);
+    target.appendChild(document.createTextNode(`:${rest}`));
+  }
+
+  function labelClassFor(label) {
+    if (label === "Permission") return "permission-label";
+    if (label === "Agent") return "agent-label";
+    if (isToolLabel(label)) return "tool-label";
+    return "";
+  }
+
+  function isToolLabel(label) {
+    return new Set([
+      "Read file",
+      "Write file",
+      "Search",
+      "Web search",
+      "Web fetch",
+      "MCP search",
+      "MCP fetch",
+      "MCP tool",
+      "Run command",
+      "Tool done",
+    ]).has(label);
+  }
+
+  function renderTextLines(text, lines) {
+    text.replaceChildren();
+    lines.forEach((line, idx) => {
+      if (idx > 0) {
+        text.appendChild(document.createTextNode("\n"));
+      }
+      appendHighlightedLine(text, line);
+    });
+  }
+
   function render(root, meta, text, payload) {
     const source = (payload && payload.source) || "hook";
     const mode = payload && payload.mode ? payload.mode : "hook";
@@ -39,9 +97,9 @@
         const mm = String(d.getMinutes()).padStart(2, "0");
         return `${hh}:${mm} ${line}`;
       });
-      text.textContent = merged.reverse().join("\n");
+      renderTextLines(text, merged.reverse());
     } else {
-      text.textContent = (payload && payload.text) || "";
+      renderTextLines(text, [(payload && payload.text) || ""]);
     }
     applyDynamicHeight(root, text).catch(() => {});
   }
