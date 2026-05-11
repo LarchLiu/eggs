@@ -1,0 +1,44 @@
+{
+  "name": "eggs",
+  "version": "1.0.0",
+  "description": "Integrates Codex with the Eggs animated desktop companion. Shows user prompts, tool activity, permission requests, and stop summaries as local pet bubbles while bundling the full Eggs desktop companion skill.",
+  "author": {
+    "name": "Alex.Liu",
+    "email": "larch.liu@gmail.com",
+    "url": "https://github.com/larchliu/eggs"
+  },
+  "homepage": "https://github.com/larchliu/eggs",
+  "repository": "https://github.com/larchliu/eggs",
+  "license": "MIT",
+  "keywords": [
+    "desktop-companion",
+    "notifications",
+    "hooks",
+    "eggs",
+    "pet",
+    "sprite",
+    "animation"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Eggs Desktop Companion",
+    "shortDescription": "Spawn a roaming desktop sprite companion and show Codex events as pet bubbles.",
+    "longDescription": "Eggs bundles the full desktop companion skill together with Codex hook integration, so prompts, tool activity, permission requests, and agent stop summaries appear as interactive local pet bubbles.",
+    "developerName": "Alex.Liu",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/larchliu/eggs",
+    "privacyPolicyURL": "https://github.com/larchliu/eggs",
+    "termsOfServiceURL": "https://github.com/larchliu/eggs",
+    "defaultPrompt": [
+      "Use $eggs to spawn an animated desktop companion.",
+      "Show Codex hook events as Eggs pet bubbles.",
+      "Stop or switch the current Eggs companion state."
+    ],
+    "brandColor": "#2F855A"
+  }
+}

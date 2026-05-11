@@ -1,0 +1,13 @@
+{
+  "name": "eggs",
+  "owner": {
+    "name": "Alex.Liu"
+  },
+  "plugins": [
+    {
+      "name": "eggs",
+      "source": "./claude-plugin",
+      "description": "Integrates Claude Code with the Eggs animated desktop companion"
+    }
+  ]
+}
