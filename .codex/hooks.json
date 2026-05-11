@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .codex/hooks/user_prompt_submit.py"
+            "command": "node .codex/hooks/eggs-codex-notify.js user_prompt_submit"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .codex/hooks/post_tool_use.py"
+            "command": "node .codex/hooks/eggs-codex-notify.js post_tool_use"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .codex/hooks/stop.py"
+            "command": "node .codex/hooks/eggs-codex-notify.js stop"
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .codex/hooks/permission_request.py"
+            "command": "node .codex/hooks/eggs-codex-notify.js permission_request"
           }
         ]
       }
