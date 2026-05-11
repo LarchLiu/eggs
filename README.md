@@ -1,18 +1,18 @@
-# Eggs
+<p align="center">
+  <img src="./desktop/src-tauri/icons/128x128.png" width="100" alt="Eggs">
+</p>
 
-Eggs is a desktop pet app with a Tauri 2 runtime (`desktop/`) and a standalone Go remote server (`server/`).
+<h1 align="center">Eggs</h1>
 
-Current primary runtime is the `eggs` desktop binary built from `desktop/src-tauri`.  
-The old Python runtime under `eggs/scripts/egg_desktop.py` is now legacy-compatible, not the main path.
+<p align="center">Multi-user desktop pet</p>
 
-## What The Desktop App Does
+## Features
 
-- Runs a transparent always-on-top pet window.
-- Supports multiple pet assets (`pet.json` + spritesheet).
-- Supports runtime state switching (`idle`, `running-right`, `running-left`, `waving`, `jumping`, `failed`, `waiting`, `running`, `review`).
-- Supports multiplayer remote sessions (random pool or invite room).
-- Shows peer windows and local/remote chat bubbles.
-- Supports local hook bubble ingestion via `eggs hook <text>`.
+- Multiple pets — Compatible with Codex pet packs.
+- Custom pet states — Define arbitrary states per pet.
+- Multiplayer remote sessions — Sync pet status and chat with peers.
+- Agent hooks — Render local hook events as pet bubbles.
+- Skills — Built-in compatibility with the community Skills ecosystem.
 
 ## Quick Start
 

@@ -15,6 +15,10 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                 eprintln!("usage: eggs hook <text>");
                 return 2;
             }
+            if !is_gui_running() {
+                println!("hook bubble skipped (eggs GUI is not running)");
+                return 0;
+            }
             match crate::bubbles::queue_hook_message(&text) {
                 Ok(Some(_)) => {
                     println!("hook bubble queued");
@@ -172,6 +176,17 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
             2
         }
     }
+}
+
+fn is_gui_running() -> bool {
+    let Some(pid) = crate::pid::read() else {
+        return false;
+    };
+    let alive = crate::pid::is_alive(pid);
+    if !alive {
+        crate::pid::clear();
+    }
+    alive
 }
 
 /// Called by the single-instance plugin when a second invocation lands while
