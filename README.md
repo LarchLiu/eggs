@@ -310,3 +310,5 @@ scripts/         Release helpers
 
 - `eggs/scripts/egg_desktop.py` remains useful for compatibility and tooling, but feature development is centered on `desktop/src-tauri`.
 - Existing legacy `state.json` fields like `sprite` are still accepted by the desktop runtime (`sprite` aliases to `pet`).
+
+[linux.do](https://linux.do)
