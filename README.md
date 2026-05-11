@@ -311,4 +311,5 @@ scripts/         Release helpers
 - `eggs/scripts/egg_desktop.py` remains useful for compatibility and tooling, but feature development is centered on `desktop/src-tauri`.
 - Existing legacy `state.json` fields like `sprite` are still accepted by the desktop runtime (`sprite` aliases to `pet`).
 
-[linux.do](https://linux.do)
+## Related Community
+[linux.do](https://linux.do): an active Chinese tech community focused on AI, software development, resource sharing, and frontier technology discussions. Its vision is "a new ideal community", and its community culture emphasizes sincerity, friendliness, unity, and professionalism.
