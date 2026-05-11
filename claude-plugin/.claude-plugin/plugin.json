@@ -2,7 +2,7 @@
   "name": "eggs",
   "displayName": "Eggs Desktop Companion",
   "description": "Integrates Claude Code with the Eggs animated desktop companion. Shows real-time notifications for user prompts, tool usage, permissions, and agent responses as interactive bubbles on your desktop pet.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "author": {
     "name": "Alex.Liu"
   },
