@@ -1,6 +1,6 @@
 [package]
 name = "eggs"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 description = "Codex-compatible animated desktop pet"
 default-run = "eggs"

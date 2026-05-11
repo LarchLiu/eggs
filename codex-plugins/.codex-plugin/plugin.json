@@ -1,6 +1,6 @@
 {
   "name": "eggs",
-  "version": "1.0.0",
+  "version": "0.4.3",
   "description": "Integrates Codex with the Eggs animated desktop companion. Shows user prompts, tool activity, permission requests, and stop summaries as local pet bubbles while bundling the full Eggs desktop companion skill.",
   "author": {
     "name": "Alex.Liu",
