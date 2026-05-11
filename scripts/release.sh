@@ -7,6 +7,8 @@
 # Touches:
 #   desktop/src-tauri/Cargo.toml          version = "..."
 #   desktop/src-tauri/tauri.conf.json     "version": "..."
+#   claude-plugin/.claude-plugin/plugin.json   "version": "..."
+#   codex-plugins/.codex-plugin/plugin.json     "version": "..."
 #   desktop/src-tauri/Cargo.lock          via `cargo check`
 #
 # Then commits + tags `vX.Y.Z` locally. Does NOT push — review the diff
@@ -14,6 +16,23 @@
 #   git push origin <branch> vX.Y.Z
 
 set -eu
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cargo_toml="$root/desktop/src-tauri/Cargo.toml"
+tauri_conf="$root/desktop/src-tauri/tauri.conf.json"
+claude_plugin="$root/claude-plugin/.claude-plugin/plugin.json"
+codex_plugin="$root/codex-plugins/.codex-plugin/plugin.json"
+
+release_tag="$(git -C "$root" tag --list 'v*' --sort=-v:refname | head -n 1)"
+
+if [ $# -eq 0 ]; then
+    cat >&2 <<EOF
+missing version
+latest release tag: ${release_tag:-<none>}
+usage: $0 <new-version>     e.g. $0 0.2.0
+EOF
+    exit 2
+fi
 
 if [ $# -ne 1 ]; then
     echo "usage: $0 <new-version>     e.g. $0 0.2.0" >&2
@@ -27,10 +46,6 @@ if ! printf '%s' "$new" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+].+)?$'; then
     echo "version must look like X.Y.Z (got '$new')" >&2
     exit 2
 fi
-
-root="$(cd "$(dirname "$0")/.." && pwd)"
-cargo_toml="$root/desktop/src-tauri/Cargo.toml"
-tauri_conf="$root/desktop/src-tauri/tauri.conf.json"
 
 # Refuse if the working tree has uncommitted work — the bump commit below
 # would otherwise sweep unrelated changes into the release.
@@ -50,6 +65,8 @@ fi
 # `sed -i ''` macOS-vs-GNU footgun.
 perl -pi -e 's/^version = ".*"/version = "'"$new"'"/' "$cargo_toml"
 perl -pi -e 's/"version":\s*".*"/"version": "'"$new"'"/' "$tauri_conf"
+perl -pi -e 's/"version":\s*".*"/"version": "'"$new"'"/' "$claude_plugin"
+perl -pi -e 's/"version":\s*".*"/"version": "'"$new"'"/' "$codex_plugin"
 
 # Refresh Cargo.lock so the commit is self-consistent.
 ( cd "$root/desktop/src-tauri" && cargo check )
@@ -57,6 +74,8 @@ perl -pi -e 's/"version":\s*".*"/"version": "'"$new"'"/' "$tauri_conf"
 git -C "$root" add \
     desktop/src-tauri/Cargo.toml \
     desktop/src-tauri/tauri.conf.json \
+    claude-plugin/.claude-plugin/plugin.json \
+    codex-plugins/.codex-plugin/plugin.json \
     desktop/src-tauri/Cargo.lock
 git -C "$root" commit -m "chore: release v$new"
 git -C "$root" tag "v$new"
