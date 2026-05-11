@@ -18,12 +18,12 @@ pub const BUBBLE_MIN_HEIGHT: f64 = 20.0;
 pub const BUBBLE_MAX_HEIGHT: f64 = 60.0;
 pub const INPUT_MIN_HEIGHT: f64 = 50.0;
 pub const INPUT_MAX_HEIGHT: f64 = 100.0;
-const DEFAULT_HOOK_TTL_MS: u64 = 8_000;
 const DEFAULT_USER_TTL_MS: u64 = 12_000;
 const MAX_BUBBLE_TEXT_CHARS: usize = 2_000;
 const CHAT_HISTORY_LIMIT: usize = 5;
 const LABEL_PREFIX: &str = "bubble-";
 const CHAT_WINDOW_PREFIX: &str = "chat-";
+const HOOK_WINDOW_PREFIX: &str = "hook-";
 const INPUT_WINDOW_PREFIX: &str = "input-";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -195,6 +195,7 @@ impl OpenBubble {
 struct BubbleStore {
     open: HashMap<String, OpenBubble>,
     chat: HashMap<String, ChatBucket>,
+    hook: HashMap<String, ChatBucket>,
 }
 
 pub struct BubbleWindowManager {
@@ -221,40 +222,35 @@ impl BubbleWindowManager {
         }
     }
 
-    pub async fn close(&self, app: &AppHandle, bubble_id: &str) {
-        let removed = {
-            let mut store = self.store.lock().await;
-            store.open.remove(bubble_id)
-        };
-        if removed.is_none() {
-            return;
-        }
-        if let Some(win) = app.get_webview_window(&bubble_window_label(bubble_id)) {
-            let _ = win.close();
-        }
-    }
-
-    pub async fn dismiss_chat(&self, app: &AppHandle, bubble_id: &str) {
-        let (should_close, owner_key) = {
+    pub async fn dismiss_bubble(&self, app: &AppHandle, bubble_id: &str) {
+        let should_close = {
             let mut store = self.store.lock().await;
             let Some(open) = store.open.get(bubble_id) else {
                 return;
             };
-            if open.mode != BubbleMode::Chat {
+            let mode = open.mode;
+            let owner_key = open.owner.to_key();
+            // Input bubbles have their own cancel path; ignore dismiss clicks
+            // so the user doesn't lose a half-typed message by mis-clicking
+            // outside the input window.
+            if mode == BubbleMode::Input {
                 return;
             }
-            let owner_key = open.owner.to_key();
             store.open.remove(bubble_id);
-            if let Some(bucket) = store.chat.get_mut(&owner_key) {
+            let bucket_table = match mode {
+                BubbleMode::Chat => &mut store.chat,
+                BubbleMode::Hook => &mut store.hook,
+                BubbleMode::Input => unreachable!(),
+            };
+            if let Some(bucket) = bucket_table.get_mut(&owner_key) {
                 bucket.dismissed = true;
             }
-            (true, owner_key)
+            true
         };
         if should_close {
             if let Some(win) = app.get_webview_window(&bubble_window_label(bubble_id)) {
                 let _ = win.close();
             }
-            let _ = owner_key;
             self.reposition_all(app).await;
         }
     }
@@ -264,27 +260,6 @@ impl BubbleWindowManager {
         if let Some(open) = store.open.get_mut(bubble_id) {
             open.hovered = hovering;
         }
-    }
-
-    pub async fn expire_due(&self, app: &AppHandle) {
-        let now = now_ms();
-        let expired: Vec<String> = {
-            let store = self.store.lock().await;
-            store
-                .open
-                .values()
-                .filter(|open| {
-                    open.mode == BubbleMode::Hook
-                        && !open.hovered
-                        && open.created_ms.saturating_add(open.ttl_ms) <= now
-                })
-                .map(|open| open.id.clone())
-                .collect()
-        };
-        for id in expired {
-            self.close(app, &id).await;
-        }
-        self.reposition_all(app).await;
     }
 
     pub async fn reposition_all(&self, app: &AppHandle) {
@@ -454,35 +429,67 @@ impl BubbleWindowManager {
     }
 
     async fn show_hook(&self, app: &AppHandle, event: BubbleEvent) {
-        let id = event.id.clone();
-        let should_open = {
+        let owner = event.owner.clone();
+        let owner_key = owner.to_key();
+        let id = hook_window_id(&owner);
+
+        let (need_open, need_emit) = {
             let mut store = self.store.lock().await;
-            let open = OpenBubble {
-                id: id.clone(),
-                owner: event.owner,
-                source: event.source,
-                mode: BubbleMode::Hook,
+            let bucket = store.hook.entry(owner_key).or_default();
+            bucket.recent.push_back(ChatLine {
                 text: event.text.clone(),
-                messages: vec![ChatLine {
-                    text: event.text,
-                    created_ms: event.created_ms,
-                }],
-                ttl_ms: event.ttl_ms,
                 created_ms: event.created_ms,
-                hovered: false,
-                height: BUBBLE_MAX_HEIGHT,
-            };
-            store.open.insert(id.clone(), open).is_none()
+            });
+            while bucket.recent.len() > CHAT_HISTORY_LIMIT {
+                bucket.recent.pop_front();
+            }
+            bucket.dismissed = false;
+
+            let messages: Vec<ChatLine> = bucket.recent.iter().cloned().collect();
+            let latest = messages
+                .last()
+                .map(|m| m.text.clone())
+                .unwrap_or_default();
+
+            let mut need_open = false;
+            let mut need_emit = false;
+            if let Some(open) = store.open.get_mut(&id) {
+                open.owner = event.owner.clone();
+                open.source = event.source;
+                open.text = latest;
+                open.messages = messages;
+                open.created_ms = event.created_ms;
+                open.hovered = false;
+                need_emit = true;
+            } else {
+                need_open = true;
+                store.open.insert(
+                    id.clone(),
+                    OpenBubble {
+                        id: id.clone(),
+                        owner,
+                        source: event.source,
+                        mode: BubbleMode::Hook,
+                        text: latest,
+                        messages,
+                        ttl_ms: 0,
+                        created_ms: event.created_ms,
+                        hovered: false,
+                        height: BUBBLE_MAX_HEIGHT,
+                    },
+                );
+            }
+            (need_open, need_emit)
         };
 
-        if should_open {
+        if need_open {
             if let Err(e) = build_bubble_window(app, &id, BubbleMode::Hook) {
                 eprintln!("could not open hook bubble window for {id}: {e}");
                 let mut store = self.store.lock().await;
                 store.open.remove(&id);
                 return;
             }
-        } else {
+        } else if need_emit {
             self.emit_update(app, &id).await;
         }
         self.reposition_all(app).await;
@@ -711,22 +718,20 @@ impl BubbleOwner {
     }
 }
 
-pub fn queue_hook_message(text: &str) -> io::Result<Option<BubbleEvent>> {
-    let Some(clean) = normalize_text(text) else {
-        return Ok(None);
-    };
-    let event = BubbleEvent {
+pub fn build_hook_event(text: &str) -> Option<BubbleEvent> {
+    let clean = normalize_text(text)?;
+    Some(BubbleEvent {
         id: make_id("hook"),
         owner: BubbleOwner::Local,
         source: BubbleSource::Hook,
         text: clean,
-        ttl_ms: DEFAULT_HOOK_TTL_MS,
+        // Hook bubbles fold into a per-owner scrolling bucket and are
+        // dismissed on click, so the TTL is unused — left at 0 for clarity.
+        ttl_ms: 0,
         created_ms: now_ms(),
         room_code: None,
         device_id: None,
-    };
-    enqueue_bubble(event.clone())?;
-    Ok(Some(event))
+    })
 }
 
 pub fn build_local_user_event(text: &str, room_code: Option<String>) -> Option<BubbleEvent> {
@@ -743,27 +748,17 @@ pub fn build_local_user_event(text: &str, room_code: Option<String>) -> Option<B
     })
 }
 
-pub fn queue_local_user_message(text: &str, room_code: Option<String>) -> io::Result<Option<BubbleEvent>> {
-    let Some(event) = build_local_user_event(text, room_code) else {
-        return Ok(None);
-    };
-    enqueue_bubble(event.clone())?;
-    Ok(Some(event))
-}
-
-pub fn queue_peer_user_message(
+pub fn build_peer_user_event(
     device_id: &str,
     text: &str,
     room_code: Option<String>,
-) -> io::Result<Option<BubbleEvent>> {
+) -> Option<BubbleEvent> {
     let dev = sanitize_device_id(device_id);
     if dev.is_empty() {
-        return Ok(None);
+        return None;
     }
-    let Some(clean) = normalize_text(text) else {
-        return Ok(None);
-    };
-    let event = BubbleEvent {
+    let clean = normalize_text(text)?;
+    Some(BubbleEvent {
         id: make_id("peer"),
         owner: BubbleOwner::Peer {
             device_id: dev.clone(),
@@ -774,9 +769,7 @@ pub fn queue_peer_user_message(
         created_ms: now_ms(),
         room_code,
         device_id: Some(dev),
-    };
-    enqueue_bubble(event.clone())?;
-    Ok(Some(event))
+    })
 }
 
 pub fn enqueue_chat_outbox(text: &str, room_code: Option<String>) -> io::Result<Option<ChatOutboxItem>> {
@@ -814,24 +807,6 @@ pub fn acknowledge_chat_outbox(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
-pub fn drain_bubble_spool() -> io::Result<Vec<BubbleEvent>> {
-    let mut out = Vec::new();
-    for path in list_spool_files(bubble_spool_dir())? {
-        let raw = match fs::read(&path) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        match serde_json::from_slice::<BubbleEvent>(&raw) {
-            Ok(event) => out.push(event),
-            Err(_) => {
-                eprintln!("warning: dropping invalid bubble spool file: {}", path.display());
-            }
-        }
-        let _ = fs::remove_file(path);
-    }
-    Ok(out)
-}
-
 pub fn append_room_history(room_code: &str, entry: ChatHistoryEntry) -> io::Result<()> {
     let room = sanitize_room_code(room_code);
     if room.is_empty() {
@@ -860,14 +835,6 @@ pub fn append_room_history(room_code: &str, entry: ChatHistoryEntry) -> io::Resu
     fs::create_dir_all(history_dir)?;
     let json = serde_json::to_string_pretty(&history)?;
     fs::write(path, format!("{json}\n"))
-}
-
-fn enqueue_bubble(event: BubbleEvent) -> io::Result<()> {
-    write_spool_json(bubble_spool_dir(), &event.id, &event)
-}
-
-fn bubble_spool_dir() -> PathBuf {
-    state::app_dir().join("bubble-spool")
 }
 
 fn chat_outbox_dir() -> PathBuf {
@@ -947,6 +914,16 @@ fn chat_window_id(owner: &BubbleOwner) -> String {
         BubbleOwner::Local => format!("{CHAT_WINDOW_PREFIX}local"),
         BubbleOwner::Peer { device_id } => format!(
             "{CHAT_WINDOW_PREFIX}peer-{}",
+            sanitize_filename(device_id)
+        ),
+    }
+}
+
+fn hook_window_id(owner: &BubbleOwner) -> String {
+    match owner {
+        BubbleOwner::Local => format!("{HOOK_WINDOW_PREFIX}local"),
+        BubbleOwner::Peer { device_id } => format!(
+            "{HOOK_WINDOW_PREFIX}peer-{}",
             sanitize_filename(device_id)
         ),
     }

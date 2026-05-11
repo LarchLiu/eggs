@@ -19,6 +19,7 @@ mod cli;
 mod cli_install;
 mod client;
 mod bubbles;
+mod ipc;
 mod peers;
 mod pet;
 mod pet_menu;
@@ -182,7 +183,7 @@ async fn bubble_dismiss(
     app: tauri::AppHandle,
     bubble_id: String,
 ) -> Result<(), String> {
-    state.dismiss_chat(&app, &bubble_id).await;
+    state.dismiss_bubble(&app, &bubble_id).await;
     Ok(())
 }
 
@@ -415,31 +416,16 @@ fn main() {
                 }
             });
 
-            // Poll one-shot bubble spool files, open bubble overlays, and keep
-            // them anchored / expired. This decouples CLI producers (`eggs hook`,
-            // `eggs message`) from GUI lifecycle and supports concurrent bubbles.
-            let app_handle_for_bubbles = win.app_handle().clone();
-            let bubble_windows_for_spool = bubble_windows.clone();
-            std::thread::spawn(move || loop {
-                match bubbles::drain_bubble_spool() {
-                    Ok(items) => {
-                        for evt in items {
-                            let app = app_handle_for_bubbles.clone();
-                            let mgr = bubble_windows_for_spool.clone();
-                            tauri::async_runtime::spawn(async move {
-                                mgr.show(&app, evt).await;
-                            });
-                        }
-                    }
-                    Err(e) => eprintln!("bubble spool read failed: {e}"),
-                }
-                let app = app_handle_for_bubbles.clone();
-                let mgr = bubble_windows_for_spool.clone();
-                tauri::async_runtime::spawn(async move {
-                    mgr.expire_due(&app).await;
-                });
-                std::thread::sleep(Duration::from_millis(200));
-            });
+            // Local IPC endpoint (unix socket / windows named pipe). CLI
+            // subcommands (`eggs hook`, `eggs message`) connect here to push
+            // BubbleEvents directly to the manager — no disk spool, no poll.
+            ipc::start_server(win.app_handle().clone(), bubble_windows.clone());
+
+            // Prior releases wrote bubble events to `~/.eggs/bubble-spool/` for
+            // a poll-based reader to drain. The new IPC path never touches it,
+            // so remove the directory once so upgrades don't leave a stale
+            // (and confusing) folder around.
+            let _ = std::fs::remove_dir_all(state::app_dir().join("bubble-spool"));
 
             // Drag tracking: when the local pet window moves, anchor every
             // open peer window to the new position. `Moved` fires per OS

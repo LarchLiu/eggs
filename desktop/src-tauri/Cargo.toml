@@ -23,7 +23,7 @@ serde_json = "1"
 dirs = "5"
 
 # Remote multiplayer (Go server at server/main.go)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["rustls-tls-native-roots", "connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 url = "2"

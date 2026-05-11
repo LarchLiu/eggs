@@ -30,7 +30,7 @@
     meta.textContent = "";
     const lines = Array.isArray(payload && payload.messages) ? payload.messages : [];
     const times = Array.isArray(payload && payload.message_times) ? payload.message_times : [];
-    if (mode === "chat" && lines.length > 0) {
+    if ((mode === "chat" || mode === "hook") && lines.length > 0) {
       const merged = lines.map((line, idx) => {
         const ts = typeof times[idx] === "number" ? times[idx] : null;
         if (!ts) return line;
@@ -142,6 +142,7 @@
     const root = document.getElementById("bubble");
     const meta = document.getElementById("meta");
     const text = document.getElementById("text");
+    const closeBtn = document.getElementById("close");
     render(root, meta, text, init || {});
 
     root.addEventListener("mouseenter", () => {
@@ -150,12 +151,14 @@
     root.addEventListener("mouseleave", () => {
       invoke("bubble_hover", { bubbleId, hovering: false }).catch(() => {});
     });
-    root.addEventListener("click", () => {
-      const mode = root.classList.contains("chat") ? "chat" : "hook";
-      if (mode === "chat") {
-        invoke("bubble_dismiss", { bubbleId }).catch(() => {});
-      }
-    });
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        if (root.classList.contains("chat") || root.classList.contains("hook")) {
+          invoke("bubble_dismiss", { bubbleId }).catch(() => {});
+        }
+      });
+    }
 
     await listen("bubble-update", (evt) => {
       const payload = evt && evt.payload ? evt.payload : {};

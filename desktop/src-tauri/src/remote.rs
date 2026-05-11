@@ -579,7 +579,12 @@ fn room_code_for_history(cfg: &RemoteConfig) -> Option<String> {
     None
 }
 
-fn handle_peer_chat(cfg: &RemoteConfig, msg: &Value) {
+fn handle_peer_chat(
+    app: &AppHandle,
+    bubble_windows: &SharedBubbleWindowManager,
+    cfg: &RemoteConfig,
+    msg: &Value,
+) {
     let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if msg_type != "peer_chat" {
         return;
@@ -596,25 +601,29 @@ fn handle_peer_chat(cfg: &RemoteConfig, msg: &Value) {
     }
     let room_code = room_code_for_history(cfg);
 
-    let event = match bubbles::queue_peer_user_message(
-        &device_id,
-        text,
-        room_code.clone(),
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("remote peer chat bubble queue failed: {e}");
-            None
-        }
+    let Some(event) = bubbles::build_peer_user_event(&device_id, text, room_code.clone()) else {
+        return;
     };
 
-    if let (Some(room), Some(evt)) = (room_code, event) {
+    // Hand the bubble to the manager on the tokio runtime — we're already in
+    // an async context but `handle_peer_chat` stays sync so the websocket
+    // select loop above doesn't have to await on every message.
+    {
+        let app = app.clone();
+        let mgr = bubble_windows.clone();
+        let evt = event.clone();
+        tauri::async_runtime::spawn(async move {
+            mgr.show(&app, evt).await;
+        });
+    }
+
+    if let Some(room) = room_code {
         let history = bubbles::ChatHistoryEntry {
-            id: evt.id,
+            id: event.id,
             source: bubbles::BubbleSource::PeerUserInput,
-            owner: bubbles::HistoryOwner::from(&evt.owner),
-            text: evt.text,
-            created_ms: evt.created_ms,
+            owner: bubbles::HistoryOwner::from(&event.owner),
+            text: event.text,
+            created_ms: event.created_ms,
             device_id: Some(device_id),
         };
         if let Err(e) = bubbles::append_room_history(&room, history) {
@@ -1028,7 +1037,7 @@ async fn run_actor(
                 tokio::select! {
                     msg = &mut recv_fut => match msg {
                         Ok(value) => {
-                            handle_peer_chat(&cfg, &value);
+                            handle_peer_chat(&app, &bubble_windows, &cfg, &value);
                             peers_changed = handle_incoming(&app, &mut peers, value);
                         }
                         Err(e) => { disconnect_reason = Some(e); }

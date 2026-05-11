@@ -19,17 +19,17 @@ pub fn run_subcommand(argv: &[String]) -> i32 {
                 println!("hook bubble skipped (eggs GUI is not running)");
                 return 0;
             }
-            match crate::bubbles::queue_hook_message(&text) {
-                Ok(Some(_)) => {
+            let Some(event) = crate::bubbles::build_hook_event(&text) else {
+                eprintln!("empty hook text");
+                return 2;
+            };
+            match crate::ipc::send_bubble_event(&event) {
+                Ok(()) => {
                     println!("hook bubble queued");
                     0
                 }
-                Ok(None) => {
-                    eprintln!("empty hook text");
-                    2
-                }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("error: could not deliver hook bubble: {e}");
                     1
                 }
             }
@@ -224,17 +224,19 @@ fn queue_user_message(text: &str) -> Result<(), i32> {
         None
     };
 
-    let evt = match crate::bubbles::queue_local_user_message(text, room_code.clone()) {
-        Ok(Some(v)) => v,
-        Ok(None) => {
+    let evt = match crate::bubbles::build_local_user_event(text, room_code.clone()) {
+        Some(v) => v,
+        None => {
             eprintln!("empty message text");
             return Err(2);
         }
-        Err(e) => {
-            eprintln!("error: {e}");
-            return Err(1);
-        }
     };
+
+    if is_gui_running() {
+        if let Err(e) = crate::ipc::send_bubble_event(&evt) {
+            eprintln!("warning: could not deliver bubble to running GUI: {e}");
+        }
+    }
 
     if remote.enabled {
         if let Err(e) = crate::bubbles::enqueue_chat_outbox(text, room_code.clone()) {
