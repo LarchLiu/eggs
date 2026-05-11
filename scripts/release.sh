@@ -40,11 +40,32 @@ if [ $# -ne 1 ]; then
 fi
 
 new="$1"
-# Mirror release.ps1's regex: X.Y.Z plus optional pre-release / build suffix
-# (the workflow trigger `tags: ['v*']` already supports e.g. v0.2.0-rc.1).
-if ! printf '%s' "$new" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+].+)?$'; then
+if ! printf '%s' "$new" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "version must look like X.Y.Z (got '$new')" >&2
     exit 2
+fi
+
+if [ -n "$release_tag" ]; then
+    latest_release_version="${release_tag#v}"
+    if ! printf '%s' "$latest_release_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "latest release tag '$release_tag' is not in vX.Y.Z format" >&2
+        exit 1
+    fi
+
+    if awk -v new="$new" -v latest="$latest_release_version" '
+        BEGIN {
+            split(new, a, ".")
+            split(latest, b, ".")
+            for (i = 1; i <= 3; i++) {
+                if ((a[i] + 0) < (b[i] + 0)) exit 0
+                if ((a[i] + 0) > (b[i] + 0)) exit 1
+            }
+            exit 0
+        }
+    '; then
+        echo "version '$new' must be greater than latest release tag '$release_tag'" >&2
+        exit 1
+    fi
 fi
 
 # Refuse if the working tree has uncommitted work — the bump commit below

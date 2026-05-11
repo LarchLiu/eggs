@@ -158,6 +158,13 @@ jobs:
       - build-windows
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -172,6 +179,10 @@ jobs:
           cd staged
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+      - name: Generate release changelog
+        run: npx changelogithub
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
@@ -182,4 +193,3 @@ jobs:
             staged/eggs-windows-x86_64.exe
             staged/SHA256SUMS
           fail_on_unmatched_files: true
-          generate_release_notes: true

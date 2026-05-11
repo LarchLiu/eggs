@@ -41,9 +41,24 @@ usage: .\scripts\release.ps1 0.2.0
     exit 2
 }
 
-if ($Version -notmatch '^\d+\.\d+\.\d+([-.+].+)?$') {
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     Write-Error "version must look like X.Y.Z (got '$Version')"
     exit 2
+}
+
+if ($releaseTag) {
+    $latestReleaseVersion = $releaseTag -replace '^v', ''
+    if ($latestReleaseVersion -notmatch '^\d+\.\d+\.\d+$') {
+        Write-Error "latest release tag '$releaseTag' is not in vX.Y.Z format"
+        exit 1
+    }
+
+    $newVersionValue = [version]$Version
+    $latestVersionValue = [version]$latestReleaseVersion
+    if ($newVersionValue -le $latestVersionValue) {
+        Write-Error "version '$Version' must be greater than latest release tag '$releaseTag'"
+        exit 1
+    }
 }
 
 # Refuse if the working tree has uncommitted work — the bump commit below
