@@ -1,0 +1,20 @@
+{
+  "name": "eggs",
+  "interface": {
+    "displayName": "Eggs"
+  },
+  "plugins": [
+    {
+      "name": "eggs",
+      "source": {
+        "source": "local",
+        "path": "./codex-plugins"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
